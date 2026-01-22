@@ -19,9 +19,20 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
+import java.io.FileInputStream;
+
 public class MainActivity extends AppCompatActivity {
 
-    AlertDialog alertDialog = null;
+    private AlertDialog alertDialog = null;
+
+    private Uri uri;
+
+    private FileInputStream fileInputStream;
+    Workbook wb;
 
 
     @Override
@@ -60,20 +71,14 @@ public class MainActivity extends AppCompatActivity {
 
         Log.w("WB", "pasa estado almacenamiento");
 
-        if (!Environment.isExternalStorageManager()) {
-            Log.w("permission", "no es ExternalStorageManager");
-            alertDialog = Methods.showAlert(this, "Error, la aplicación no tiene permiso para acceder al almacenamiento, redireccionando a configuración para que se habilite dicho permiso.");
-            alertDialog.setOnDismissListener(dialogInterface -> {
-                askPermission();
-                Methods.validatePermission(this);
-            });
-            alertDialog.show();
-        } else {
-            Methods.inputStream(this);
+        Intent intent = getIntent();
+        uri = intent.getData();
+        if (uri != null && !uri.equals(Uri.EMPTY)) {
+            ActualizarDatos.setFileInputStream(this, uri);
         }
 
 
-        Log.w("WB", "pasa permisos");
+        /*
 
         Button btnLogin = this.findViewById(R.id.btn_login);
         Button btnSalir = this.findViewById(R.id.btn_salir);
@@ -107,7 +112,7 @@ public class MainActivity extends AppCompatActivity {
 
         btnSalir.setOnClickListener((View v) -> finishAndRemoveTask());
 
-
+*/
     }
 
     private void askPermission() {
@@ -132,6 +137,8 @@ public class MainActivity extends AppCompatActivity {
     private static boolean isExternalStorageAvailable() {
         return Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState());
     }
+
+
 
 
 }

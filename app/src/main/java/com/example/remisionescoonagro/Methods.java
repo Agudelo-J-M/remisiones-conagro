@@ -14,6 +14,7 @@ import org.apache.poi.ss.usermodel.CreationHelper;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 
@@ -37,13 +38,20 @@ public class Methods {
     private static AlertDialog alertDialog = null;
 
     //decided to keep workbook in methods in order to declutter extras
-    public static XSSFWorkbook wb;
 
     private static FileInputStream fileInputStream;
 
     private static final DataFormatter dataFormatter = new DataFormatter();
 
     private static String fileAddress;
+
+    private static XSSFWorkbook tecnicoWb = null;
+
+    private static XSSFWorkbook productoWb;
+
+    private static XSSFWorkbook clienteWb;
+
+
 
 
     //changes actvity context on new activity load to set alerdialongs and close app on dismiss
@@ -54,15 +62,8 @@ public class Methods {
 
     public static void inputStream(Context context) {
 
-        StorageManager storageManager = (StorageManager) context.getSystemService(Context.STORAGE_SERVICE);
-        StorageVolume storageVolume = storageManager.getStorageVolumes().get(0);
-
         try {
-            fileAddress = storageVolume.getDirectory().getPath() + "/Download/" + getFileName();
-            fileInputStream = new FileInputStream(fileAddress);
-            loadWorkbook(context);
-            fileInputStream.close();
-            //makeWbSaveable();
+
         } catch (Exception e) {
             Log.w("Error leyendo", e.toString());
             alertDialog = Methods.showAlert(context, "Error, Excel no encontrado");
@@ -71,17 +72,44 @@ public class Methods {
         }
 
     }
-    public static String getFileName() {
+    public static XSSFWorkbook loadWorkbook(Context context, FileInputStream fileInputStream) {
+        XSSFWorkbook wb = null;
+        try {
+            if (fileInputStream != null) {
+                OPCPackage pkg = OPCPackage.open(fileInputStream);
+                wb = new XSSFWorkbook(pkg);
+                Log.w("WB creado", wb.toString());
+                fileInputStream.close();
+            }
 
-        LocalDate date = LocalDate.now();
-        // Define a locale (e.g., US locale)
-        Locale locale = Locale.US;
+        } catch (Exception e) {
+            alertDialog = showAlert(context, "Error del excel, Solicite su reivisión a un Administrador, y que se reenvie");
+            setCloseAppOnDismiss(alertDialog);
+            alertDialog.show();
+            return null;
+        }
+        Log.w("if de credenciales", "esperando");
+        return wb;
+    }
 
-        // Use the defined locale with WeekFields
-        int weekOfYear = date.get(WeekFields.of(locale).weekOfYear());
-        return "PEDIDOS " + weekOfYear + "-" + date.getYear() % 100 + ".xlsx";
+    public static String[] saveWorkbook(Context context, XSSFWorkbook wb, String fileName) {
+        try {
+            String filePath = context.getFilesDir() + File.separator + fileName;
+            OutputStream fileOut = new FileOutputStream(filePath);
+            wb.write(fileOut);
+            fileOut.close();
+            Log.w("saveWorkbook", "Workbook saved");
+            return new String[]{"1", ""};
+        } catch (Error e) {
+            Log.w("Error: cant save wb", e.toString());
+            return new String[]{"2", "Error guardando excel"};
+        } catch (Exception e) {
+            Log.w("Exception: cant save wb", e.toString());
+            return new String[]{"2", "Error guardando excel, comuníquese con un administrador"};
+        }
 
     }
+
     public static AlertDialog showAlert(Context context, String message) {
         AlertDialog alertDialog = new AlertDialog.Builder(context).create();
         alertDialog.setTitle("Alerta");
@@ -95,31 +123,7 @@ public class Methods {
         alertDialog.setOnDismissListener(dialogInterface -> activityRef.get().finishAndRemoveTask());
     }
 
-    private static void loadWorkbook(Context context) {
-        try {
-            if (!Environment.isExternalStorageManager()) {
-                alertDialog = Methods.showAlert(context, "Error, la aplicación no tiene permiso para acceder al almacenamiento. Active dicho permiso.");
-                setCloseAppOnDismiss(alertDialog);
-                alertDialog.show();
-                return;
-            }
-            if (fileInputStream != null) {
-                OPCPackage pkg = OPCPackage.open(fileInputStream);
-                wb = new XSSFWorkbook(pkg);
-                Log.w("WB creado", wb.toString());
-                fileInputStream.close();
 
-            }
-
-            Log.w("retornó el Excel", Methods.wb.toString());
-
-        } catch (Exception e) {
-            alertDialog = showAlert(context, "Error, excel inaccesible, revise los permisos de la aplicación y que el Excel se encuentre nombrado correctamente en la carpeta /Download");
-            setCloseAppOnDismiss(alertDialog);
-            alertDialog.show();
-        }
-        Log.w("if de credenciales", "esperando");
-    }
 
 
     public static void validatePermission(Context context) {
@@ -140,8 +144,9 @@ public class Methods {
             return new String[]{"2", "Error, no puede haber campos vacíos"};
         }
 
+
         try {
-            Sheet conductoresSheet = wb.getSheetAt(0);
+            Sheet conductoresSheet = tecnicoWb.getSheetAt(1);
 
             if (!dataFormatter.formatCellValue(conductoresSheet.getRow(0).getCell(0)).equalsIgnoreCase("Conductor")) {
                 return new String[]{"0", "Formato incorrecto de la hoja de Excel, comuníquese con un administrador."};
