@@ -12,6 +12,21 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RemisionesCoonagro">
         <activity
+            android:name=".ActualizarDatosActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet/xlsx" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".MenuActivity"
             android:exported="false" />
         <activity
