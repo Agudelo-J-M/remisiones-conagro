@@ -59,25 +59,19 @@ public class MainActivity extends AppCompatActivity {
         Log.w("WB", "crea actividad");
 
 
-
-
-        if (!isExternalStorageAvailable() || isExternalStorageReadOnly()) {
-            Log.w("FileUtils", "Storage not available or read only");
-            alertDialog = Methods.showAlert(this, "Error, almacenamiento inaccesible.");
-            Methods.setCloseAppOnDismiss(alertDialog);
-
-            alertDialog.show();
-        }
-
-        Log.w("WB", "pasa estado almacenamiento");
-
         Intent intent = getIntent();
         uri = intent.getData();
         if (uri != null && !uri.equals(Uri.EMPTY)) {
-            ActualizarDatos.setFileInputStream(this, uri);
+            String name = ActualizarDatos.setFileInputStream(this, uri);
+            alertDialog = Methods.showAlert(this, "Excel de "+name+" Actualizado con éxito");
+            alertDialog.setOnDismissListener(dialogInterface -> {
+                Methods.initializeData(this);
+            });
+            alertDialog.show();
+        } else{
+            Methods.initializeData(this);
         }
-
-
+        Log.w("inicializa exceles", "");
         /*
 
         Button btnLogin = this.findViewById(R.id.btn_login);
@@ -114,31 +108,4 @@ public class MainActivity extends AppCompatActivity {
 
 */
     }
-
-    private void askPermission() {
-        Intent Environment = new
-                Intent().setAction(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                .setData(Uri.parse("package:" + getPackageName()));
-
-        if (Environment.resolveActivity(getPackageManager()) != null) {
-
-            startActivity(Environment);
-
-
-        }
-    }
-
-
-
-    private static boolean isExternalStorageReadOnly() {
-        return Environment.MEDIA_MOUNTED_READ_ONLY.equals(Environment.getExternalStorageState());
-    }
-
-    private static boolean isExternalStorageAvailable() {
-        return Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState());
-    }
-
-
-
-
 }

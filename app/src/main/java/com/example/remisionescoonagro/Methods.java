@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
 import android.util.Log;
@@ -39,11 +41,7 @@ public class Methods {
 
     //decided to keep workbook in methods in order to declutter extras
 
-    private static FileInputStream fileInputStream;
-
     private static final DataFormatter dataFormatter = new DataFormatter();
-
-    private static String fileAddress;
 
     private static XSSFWorkbook tecnicoWb = null;
 
@@ -60,18 +58,64 @@ public class Methods {
 
     }
 
-    public static void inputStream(Context context) {
-
-        try {
-
-        } catch (Exception e) {
-            Log.w("Error leyendo", e.toString());
-            alertDialog = Methods.showAlert(context, "Error, Excel no encontrado");
-            setCloseAppOnDismiss(alertDialog);
+    public static void initializeData(Context context){
+        alertDialog = showAlert(context, "Leyendo Exceles...");
+        alertDialog.show();
+        final Handler handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(() -> {
+            FileInputStream fileInputStream;
+            try {
+                fileInputStream = new FileInputStream(context.getFilesDir() + File.separator + "Tecnico.xlsx");
+                tecnicoWb = loadWorkbook(context, fileInputStream);
+                fileInputStream.close();
+                if(tecnicoWb == null){
+                    throw new Exception("Error leyendo");
+                }
+            } catch (Exception e) {
+                Log.w("Error leyendo", e.toString());
+                alertDialog.dismiss();
+                alertDialog = showAlert(context, "Error, Excel de Técnico no encontrado, abra el Excel desde su correo con la aplicación");
+                setCloseAppOnDismiss(alertDialog);
+                alertDialog.show();
+                return;
+            }
+            try {
+                fileInputStream = new FileInputStream(context.getFilesDir() + File.separator + "Producto.xlsx");
+                productoWb = loadWorkbook(context, fileInputStream);
+                fileInputStream.close();
+                if(productoWb == null){
+                    throw new Exception("Error leyendo");
+                }
+            } catch (Exception e) {
+                Log.w("Error leyendo", e.toString());
+                alertDialog.dismiss();
+                alertDialog = showAlert(context, "Error, Excel de Producto no encontrado, abra el Excel desde su correo con la aplicación");
+                setCloseAppOnDismiss(alertDialog);
+                alertDialog.show();
+                return;
+            }
+            try {
+                fileInputStream = new FileInputStream(context.getFilesDir() + File.separator + "Cliente.xlsx");
+                clienteWb = loadWorkbook(context, fileInputStream);
+                fileInputStream.close();
+                if(clienteWb == null){
+                    throw new Exception("Error leyendo");
+                }
+            } catch (Exception e) {
+                Log.w("Error leyendo", e.toString());
+                alertDialog.dismiss();
+                alertDialog = showAlert(context, "Error, Excel de Cliente no encontrado, abra el Excel desde su correo con la aplicación");
+                setCloseAppOnDismiss(alertDialog);
+                alertDialog.show();
+                return;
+            }
+            alertDialog.dismiss();
+            alertDialog = showAlert(context, "Éxito leyendo Exceles");
             alertDialog.show();
-        }
+        }, 1250);
 
     }
+
     public static XSSFWorkbook loadWorkbook(Context context, FileInputStream fileInputStream) {
         XSSFWorkbook wb = null;
         try {
@@ -92,20 +136,26 @@ public class Methods {
         return wb;
     }
 
-    public static String[] saveWorkbook(Context context, XSSFWorkbook wb, String fileName) {
+    public static void saveWorkbook(Context context, XSSFWorkbook wb, String fileName) {
         try {
             String filePath = context.getFilesDir() + File.separator + fileName;
             OutputStream fileOut = new FileOutputStream(filePath);
             wb.write(fileOut);
             fileOut.close();
             Log.w("saveWorkbook", "Workbook saved");
-            return new String[]{"1", ""};
+
         } catch (Error e) {
             Log.w("Error: cant save wb", e.toString());
-            return new String[]{"2", "Error guardando excel"};
+            alertDialog = showAlert(context, "Error guardando excel, comuniquese con un administrador");
+            setCloseAppOnDismiss(alertDialog);
+            alertDialog.show();
+
         } catch (Exception e) {
             Log.w("Exception: cant save wb", e.toString());
-            return new String[]{"2", "Error guardando excel, comuníquese con un administrador"};
+            alertDialog = showAlert(context, "Error guardando excel, comuniquese con un administrador");
+            setCloseAppOnDismiss(alertDialog);
+            alertDialog.show();
+
         }
 
     }
@@ -122,23 +172,6 @@ public class Methods {
     public static void setCloseAppOnDismiss(AlertDialog alertDialog) {
         alertDialog.setOnDismissListener(dialogInterface -> activityRef.get().finishAndRemoveTask());
     }
-
-
-
-
-    public static void validatePermission(Context context) {
-        alertDialog = showAlert(context, "Leyendo Excel");
-        alertDialog.setOnDismissListener(dialogInterface -> {
-            if (Environment.isExternalStorageManager()) {
-                inputStream(context);
-            } else {
-                alertDialog = Methods.showAlert(context, "Error, no se otorgaron los permisos requeridos.");
-                setCloseAppOnDismiss(alertDialog);
-            }
-        });
-        alertDialog.show();
-    }
-
     public static String[] validateCredentials(String username, String password) {
         if (validateEmptyStringArray(new String[]{username, password})) {
             return new String[]{"2", "Error, no puede haber campos vacíos"};

@@ -19,7 +19,9 @@ public class ActualizarDatos {
 
     private static XSSFWorkbook wb;
 
-    public static void setFileInputStream(Context context, Uri uri) {
+    private static AlertDialog alertDialog;
+
+    public static String setFileInputStream(Context context, Uri uri) {
         try {
             fileInputStream = new FileInputStream(context.getContentResolver().openFileDescriptor(uri, "r").getFileDescriptor());
             wb = Methods.loadWorkbook(context, fileInputStream);
@@ -31,6 +33,7 @@ public class ActualizarDatos {
         }
         Log.w("contenidoWB", wb.getSheetAt(1).getRow(0).getCell(0).toString() );
         checkWorkbookType(context);
+        return wb.getSheetAt(1).getSheetName();
 
     }
 
@@ -47,8 +50,9 @@ public class ActualizarDatos {
             case "Cliente":
                 Methods.saveWorkbook(context, wb,"Cliente.xlsx");
                 break;
+
             default:
-                AlertDialog alertDialog = Methods.showAlert(context, "Error del excel, Solicite su revisión a un Administrador, y que se reenvie corregido");
+                alertDialog = Methods.showAlert(context, "Error del excel, Solicite su revisión a un Administrador, y que se reenvie corregido");
                 Methods.setCloseAppOnDismiss(alertDialog);
                 alertDialog.show();
                 break;
