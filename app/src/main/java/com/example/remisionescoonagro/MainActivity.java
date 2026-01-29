@@ -24,6 +24,8 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.FileInputStream;
+import java.util.HashMap;
+import java.util.Objects;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -72,7 +74,7 @@ public class MainActivity extends AppCompatActivity {
             Methods.initializeData(this);
         }
         Log.w("inicializa exceles", "");
-        /*
+
 
         Button btnLogin = this.findViewById(R.id.btn_login);
         Button btnSalir = this.findViewById(R.id.btn_salir);
@@ -84,20 +86,18 @@ public class MainActivity extends AppCompatActivity {
         btnLogin.setOnClickListener((View v) ->
         {
             Log.w("tag", "inicia el onclicklistener");
-            String username = edtUsername.getText().toString().toUpperCase();
-            String password = edtPassword.getText().toString().toUpperCase();
-            String[] message = Methods.validateCredentials(username, password);
-
-            if (message[0].equals("1")) {
-                final String[] userData = {message[2], message[3], message[4]};
+            String username = edtUsername.getText().toString();
+            String password = edtPassword.getText().toString();
+            var userData = Methods.validateCredentials(username, password);
+            if (userData.get("code").equals("1")) {
                 Log.w("login", "test exitoso");
                 Intent myIntent = new Intent(this, MenuActivity.class);
                 myIntent.putExtra("userData", userData);
                 this.startActivity(myIntent);
                 finishAffinity();
             } else {
-                alertDialog = Methods.showAlert(this, message[1]);
-                if (message[0].equals("0")){
+                alertDialog = Methods.showAlert(this, userData.get("message"));
+                if (Objects.equals(userData.get("code"), "0")){
                     Methods.setCloseAppOnDismiss(alertDialog);
                 }
                 alertDialog.show();
@@ -106,6 +106,6 @@ public class MainActivity extends AppCompatActivity {
 
         btnSalir.setOnClickListener((View v) -> finishAndRemoveTask());
 
-*/
+
     }
 }

@@ -12,6 +12,7 @@ import android.util.Log;
 
 import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.CreationHelper;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
@@ -30,7 +31,9 @@ import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 public class Methods {
@@ -83,6 +86,7 @@ public class Methods {
                 fileInputStream = new FileInputStream(context.getFilesDir() + File.separator + "Producto.xlsx");
                 productoWb = loadWorkbook(context, fileInputStream);
                 fileInputStream.close();
+
                 if(productoWb == null){
                     throw new Exception("Error leyendo");
                 }
@@ -172,33 +176,70 @@ public class Methods {
     public static void setCloseAppOnDismiss(AlertDialog alertDialog) {
         alertDialog.setOnDismissListener(dialogInterface -> activityRef.get().finishAndRemoveTask());
     }
-    public static String[] validateCredentials(String username, String password) {
+    public static HashMap<String, String> validateCredentials(String username, String password) {
+        var data = new HashMap<String, String>();
         if (validateEmptyStringArray(new String[]{username, password})) {
-            return new String[]{"2", "Error, no puede haber campos vacíos"};
+            data.put("code", "2");
+            data.put("message", "Error, no puede haber campos vacíos");
+            return data;
         }
-
-
         try {
-            Sheet conductoresSheet = tecnicoWb.getSheetAt(1);
-
-            if (!dataFormatter.formatCellValue(conductoresSheet.getRow(0).getCell(0)).equalsIgnoreCase("Conductor")) {
-                return new String[]{"0", "Formato incorrecto de la hoja de Excel, comuníquese con un administrador."};
-            }
-            for (Row row : conductoresSheet) {
-                if (row.getRowNum() == 0 || row.getRowNum() == 1) {
+            Sheet tecnicoSheet = tecnicoWb.getSheetAt(1);
+            int indexUsuario = 0;
+            int indexContraseña = 0;
+            int indexCorreoGestora = 0;
+            int indexNombre = 0;
+            int indexPrefijo = 0;
+            int indexConsecutivo = 0;
+            for (Row row : tecnicoSheet) {
+                if (row.getRowNum() == 0) {
+                    for (Cell cell : row){
+                        if (cell.toString().equalsIgnoreCase("Usuario")){
+                            indexUsuario = cell.getColumnIndex();
+                        }
+                        if (cell.toString().equalsIgnoreCase("Contraseña")){
+                            indexContraseña = cell.getColumnIndex();
+                        }
+                        if (cell.toString().equalsIgnoreCase("Correo Gestora")){
+                            indexCorreoGestora = cell.getColumnIndex();
+                        }
+                        if (cell.toString().equalsIgnoreCase("Prefijo")){
+                            indexPrefijo = cell.getColumnIndex();
+                        }
+                        if (cell.toString().equalsIgnoreCase("Consecutivo")){
+                            indexConsecutivo = cell.getColumnIndex();
+                        }
+                    }
+                    if (indexUsuario == 0 && indexContraseña == 0){
+                        throw new Exception("Error");
+                    }
                     continue;
                 }
-                if (username.equals(dataFormatter.formatCellValue(row.getCell(3)))) {
-                    if (password.equals(dataFormatter.formatCellValue(row.getCell(1)))) {
-                        //name, id, plate
-                        return new String[]{"1", "Inicio de sesión exitoso.", dataFormatter.formatCellValue(row.getCell(2)), dataFormatter.formatCellValue(row.getCell(1)), dataFormatter.formatCellValue(row.getCell(3))};
+                if (username.equals(dataFormatter.formatCellValue(row.getCell(indexUsuario)))) {
+                    if (password.equals(dataFormatter.formatCellValue(row.getCell(indexContraseña)))) {
+                        data.put("code", "1");
+                        data.put("message", "Inicio de sesión exitoso.");
+                        data.put("nombre", dataFormatter.formatCellValue(row.getCell(indexNombre)));
+                        data.put("correoGestora", dataFormatter.formatCellValue(row.getCell(indexCorreoGestora)));
+                        data.put("Prefijo", dataFormatter.formatCellValue(row.getCell(indexPrefijo)));
+                        if(row.getCell(indexConsecutivo) == null || row.getCell(indexConsecutivo).getCellType() == CellType.BLANK) {
+                            data.put("consecutivo", "");
+                        } else{
+                            data.put("consecutivo", dataFormatter.formatCellValue(row.getCell(indexConsecutivo)));
+                        }
+                        return data;
+
                     }
                 }
             }
-        } catch (RuntimeException e) {
-            return new String[]{"0", "Error, excel inaccesible, revise los permisos de la aplicación y que el Excel se encuentre nombrado correctamente en la carpeta /Download"};
+        } catch (Exception e) {
+            data.put("code", "0");
+            data.put("message", "Error de formato de excel, solicite a un administrador que se revise integridad de datos y cabeceras.");
+            return data;
         }
-        return new String[]{"2", "Credenciales incorrectas, intente nuevamente"};
+        data.put("code", "2");
+        data.put("message", "Credenciales incorrectas, intente nuevamente.");
+        return data;
     }
 
     //validate no empty fields on forms

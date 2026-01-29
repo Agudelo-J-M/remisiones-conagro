@@ -1,3 +1,19 @@
 <resources>
     <string name="app_name">Remisiones Coonagro</string>
+    <string name="iniciar_sesi_n">Iniciar Sesión</string>
+    <string name="usuario">Usuario</string>
+    <string name="remisiones">Remisiones</string>
+    <string name="contrase_a">Contraseña</string>
+    <string name="salir">Salir</string>
+    <string name="cambiar_consecutivo">Cambiar Consecutivo</string>
+    <string name="consecutivo_actual">Consecutivo Actual</string>
+    <string name="consecutivo_nuevo">Consecutivo Nuevo</string>
+    <string name="no_hay_consecutivo">No hay consecutivo</string>
+    <string name="cambiar">Cambiar</string>
+    <string name="ingresar_remisi_n">Ingresar Remisión</string>
+    <string name="modificar_remisi_n">Modificar Remisión</string>
+    <string name="inventario_carro">Inventario Carro</string>
+    <string name="inventario_bodega">Inventario Bodega</string>
+    <string name="reporte">Reporte</string>
+    <string name="cerrar_sesi_n">Cerrar Sesión</string>
 </resources>
