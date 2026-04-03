@@ -3,13 +3,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.remisionescoonagro"
+    namespace = "io.github.agudelojm.remisionesconagro"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "com.example.remisionescoonagro"
+        applicationId = "io.github.agudelojm.remisionesconagro"
         minSdk = 30
         targetSdk = 36
         versionCode = 1

@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/tvw_Titulo_Inventario_Carro"
+        android:layout_width="0dp"
+        android:layout_height="85dp"
+        android:text="@string/inventario_carro"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:background="@color/dark_blue"
+        android:textColor="@color/white"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <TextView
+        android:id="@+id/tvw_LabelID_Inventario_Carro"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="ID Producto"
+        android:textStyle="bold"
+        app:layout_constraintTop_toBottomOf="@id/tvw_Titulo_Inventario_Carro"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <EditText
+        android:id="@+id/edt_IDProducto_Inventario_Carro"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:hint="Ingrese ID"
+        android:inputType="text"
+        app:layout_constraintTop_toBottomOf="@id/tvw_LabelID_Inventario_Carro"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <TextView
+        android:id="@+id/tvw_LabelCantidad_Inventario_Carro"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Cantidad"
+        android:textStyle="bold"
+        app:layout_constraintTop_toBottomOf="@id/edt_IDProducto_Inventario_Carro"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <EditText
+        android:id="@+id/edt_Cantidad_Inventario_Carro"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:hint="0"
+        android:inputType="number"
+        app:layout_constraintTop_toBottomOf="@id/tvw_LabelCantidad_Inventario_Carro"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <Button
+        android:id="@+id/btn_Anadir_Inventario_Carro"
+        style="@style/Widget.AppCompat.Button"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textColor="@color/white"
+        app:backgroundTint="@color/blue"
+        android:text="Añadir Item"
+        app:layout_constraintTop_toBottomOf="@id/edt_Cantidad_Inventario_Carro"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <ScrollView
+        android:id="@+id/svw_ContenedorTabla_Inventario_Carro"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="16dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/btn_Anadir_Inventario_Carro"
+        app:layout_constraintBottom_toTopOf="@id/btn_Vaciar_Inventario_Carro"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <TableLayout
+            android:id="@+id/tly_TablaDatos_Inventario_Carro"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:stretchColumns="*">
+
+            <TableRow
+                android:layout_width="match_parent"
+                android:background="#DDDDDD"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text=" ID"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text=" Producto"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="start"
+                    android:text=" Cantidad"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="start"
+                    android:text=" Borrar"
+                    android:textStyle="bold" />
+
+            </TableRow>
+        </TableLayout>
+    </ScrollView>
+
+    <Button
+        android:id="@+id/btn_Vaciar_Inventario_Carro"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Vaciar Inventario"
+        app:backgroundTint="@color/blue"
+        android:textColor="@color/white"
+        style="@style/Widget.AppCompat.Button"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

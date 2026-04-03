@@ -1,23 +1,18 @@
-package com.example.remisionescoonagro;
+package io.github.agudelojm.remisionesconagro;
 
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.storage.StorageManager;
-import android.os.storage.StorageVolume;
 import android.util.Log;
 
 import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
-import org.apache.poi.ss.usermodel.CreationHelper;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
-import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 
@@ -26,16 +21,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
-import java.time.LocalDate;
-import java.time.temporal.WeekFields;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
+
 public class Methods {
 
     private static WeakReference<Activity> activityRef;

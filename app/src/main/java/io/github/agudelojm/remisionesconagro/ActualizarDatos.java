@@ -1,14 +1,11 @@
-package com.example.remisionescoonagro;
+package io.github.agudelojm.remisionesconagro;
 
 import android.app.AlertDialog;
 import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
-import android.widget.Switch;
 
-import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.ss.usermodel.Sheet;
-import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.FileInputStream;

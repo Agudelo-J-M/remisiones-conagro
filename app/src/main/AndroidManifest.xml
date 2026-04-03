@@ -12,6 +12,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RemisionesCoonagro">
         <activity
+            android:name=".InventarioCarroActivity"
+            android:exported="false" />
+        <activity
             android:name=".CambiarConsecutivoActivity"
             android:exported="false" />
         <activity

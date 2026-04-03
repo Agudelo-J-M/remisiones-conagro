@@ -1,4 +1,4 @@
-package com.example.remisionescoonagro;
+package io.github.agudelojm.remisionesconagro;
 
 import android.os.Bundle;
 

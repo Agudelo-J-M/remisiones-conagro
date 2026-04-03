@@ -1,4 +1,4 @@
-package com.example.remisionescoonagro;
+package io.github.agudelojm.remisionesconagro;
 
 import android.app.AlertDialog;
 import android.content.Intent;
