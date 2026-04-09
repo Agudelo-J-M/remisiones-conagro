@@ -17,14 +17,17 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import java.io.File;
+import java.io.Serializable;
 import java.time.LocalDate;
 import java.time.temporal.WeekFields;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Locale;
 
 public class MenuActivity extends AppCompatActivity {
 
-    String[] userData;
+    HashMap<String, String> userData;
+    AlertDialog alertDialog;
 
 
     @Override
@@ -42,8 +45,17 @@ public class MenuActivity extends AppCompatActivity {
 
         Methods.updateActivity(this);
 
-        AlertDialog alertDialog = null;
-        userData = getIntent().getStringArrayExtra("userData");
+
+        Intent intent = getIntent();
+        Serializable serializable =  intent.getSerializableExtra("hashMapKey");
+        if (serializable instanceof java.util.HashMap<?, ?>) {
+            // Safe to cast after instanceof check
+            userData =  (HashMap<String, String>) serializable;
+        } else {
+           alertDialog = Methods.showAlert(this, "Error recopilando datos del usuario, pongase en contacto con un administrador");
+           Methods.setCloseAppOnDismiss(alertDialog);
+           alertDialog.show();
+        }
         String bienvenida = "BIENVENIDO";
 
         try {

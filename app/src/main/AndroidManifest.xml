@@ -12,6 +12,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RemisionesCoonagro">
         <activity
+            android:name=".RechazarInventarioBodegaActivity"
+            android:exported="false" />
+        <activity
+            android:name=".PedirFirmaActivity"
+            android:exported="false" />
+        <activity
+            android:name=".InventarioBodegaActivity"
+            android:exported="false" />
+        <activity
             android:name=".InventarioCarroActivity"
             android:exported="false" />
         <activity
@@ -36,6 +45,16 @@
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
             </intent-filter>
         </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="io.github.agudelojm.remisionesconagro.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

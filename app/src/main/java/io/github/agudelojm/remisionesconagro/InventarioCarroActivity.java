@@ -1,25 +1,21 @@
 package io.github.agudelojm.remisionesconagro;
 
 import android.app.AlertDialog;
-import android.os.Bundle;
-
-import androidx.activity.EdgeToEdge;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
+import android.widget.TableLayout;
 import android.widget.TableRow;
 import android.widget.TextView;
-import android.widget.TableLayout;
-import android.widget.Toast;
 
+import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -31,6 +27,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
     private Button btnAnadir, btnVaciar;
     private TableLayout tlyTabla;
     private String[] userData;
+    private AlertDialog alertDialog;
 
     // Data Structure: Key = Product ID, Value = Quantity
     // This handles the "merge same ID" logic automatically
@@ -51,7 +48,6 @@ public class InventarioCarroActivity extends AppCompatActivity {
 
         Methods.updateActivity(this);
 
-        AlertDialog alertDialog = null;
         userData = getIntent().getStringArrayExtra("userData");
 
         initViews();
@@ -85,7 +81,16 @@ public class InventarioCarroActivity extends AppCompatActivity {
         String cantStr = edtCantidad.getText().toString().trim();
 
         if (id.isEmpty() || cantStr.isEmpty()) {
-            Toast.makeText(this, "Por favor complete todos los campos", Toast.LENGTH_SHORT).show();
+            alertDialog = Methods.showAlert(this, "Por favor complete todos los campos");
+            alertDialog.show();
+            return;
+        }
+
+        // Validate if product exists in database
+        String productName = Methods.getProductoName(this, id);
+        if (productName == null) {
+            alertDialog = Methods.showAlert(this, "Error: Producto con ID " + id + " no encontrado");
+            alertDialog.show();
             return;
         }
 
@@ -117,7 +122,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
         for (Map.Entry<String, Integer> entry : inventarioData.entrySet()) {
             String id = entry.getKey();
             String cantidad = String.valueOf(entry.getValue());
-            String nombrePlaceholder = "Cargando..."; // Logic for DB goes here later
+            String nombreProducto = Methods.getProductoName(this, id);
 
             TableRow row = new TableRow(this);
             row.setPadding(0, 10, 0, 10);
@@ -125,7 +130,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
             // Column 1: ID
             row.addView(crearTextViewCelda(id, 1f));
             // Column 2: Name
-            row.addView(crearTextViewCelda(nombrePlaceholder, 1f));
+            row.addView(crearTextViewCelda(nombreProducto != null ? nombreProducto : "No encontrado", 1f));
             // Column 3: Quantity
             row.addView(crearTextViewCelda(cantidad, 1f));
             // Column 4: Delete Button
@@ -168,7 +173,8 @@ public class InventarioCarroActivity extends AppCompatActivity {
     private void vaciarInventarioCompleto() {
         inventarioData.clear();
         actualizarTablaUI();
-        Toast.makeText(this, "Inventario vaciado", Toast.LENGTH_SHORT).show();
+        alertDialog = Methods.showAlert(this, "Inventario vaciado");
+        alertDialog.show();
     }
 
     private void limpiarInputs() {

@@ -39,7 +39,7 @@ public class Methods {
 
     private static XSSFWorkbook clienteWb;
 
-
+    private static XSSFWorkbook inventarioWb;
 
 
     //changes actvity context on new activity load to set alerdialongs and close app on dismiss
@@ -163,6 +163,11 @@ public class Methods {
     public static void setCloseAppOnDismiss(AlertDialog alertDialog) {
         alertDialog.setOnDismissListener(dialogInterface -> activityRef.get().finishAndRemoveTask());
     }
+
+    public static void setFinishActivityOnDismiss(AlertDialog alertDialog) {
+        alertDialog.setOnDismissListener(dialogInterface -> activityRef.get().finish());
+    }
+
     public static HashMap<String, String> validateCredentials(String username, String password) {
         var data = new HashMap<String, String>();
         if (validateEmptyStringArray(new String[]{username, password})) {
@@ -228,6 +233,66 @@ public class Methods {
         data.put("message", "Credenciales incorrectas, intente nuevamente.");
         return data;
     }
+
+    public static String getProductoName(Context context, String productoID) {
+        try {
+            if (productoWb == null) throw new Exception("Workbook not initialized");
+            Sheet productoSheet = productoWb.getSheetAt(1);
+            int indexItem = -1;
+            int indexNombre = -1;
+
+            Row headerRow = productoSheet.getRow(0);
+            for (Cell cell : headerRow) {
+                if (cell.toString().equalsIgnoreCase("item")) {
+                    indexItem = cell.getColumnIndex();
+                }
+                if (cell.toString().equalsIgnoreCase("nombre")) {
+                    indexNombre = cell.getColumnIndex();
+                }
+            }
+
+            if (indexItem == -1 || indexNombre == -1) {
+                return null;
+            }
+
+            for (Row row : productoSheet) {
+                if (row.getRowNum() == 0) continue;
+                String itemValue = dataFormatter.formatCellValue(row.getCell(indexItem));
+                if (productoID.equals(itemValue)) {
+                    return dataFormatter.formatCellValue(row.getCell(indexNombre));
+                }
+            }
+        } catch (Exception e) {
+            alertDialog = showAlert(context, "Error inesperado, comuniquese con un administrador");
+            setCloseAppOnDismiss(alertDialog);
+            alertDialog.show();
+        }
+        return null;
+    }
+
+    public static XSSFWorkbook loadInventarioWb(Context context) {
+        try {
+            FileInputStream fileInputStream = new FileInputStream(context.getFilesDir() + File.separator + "Inventario.xlsx");
+            XSSFWorkbook wb = loadWorkbook(context, fileInputStream);
+            fileInputStream.close();
+
+            if (wb == null) {
+                throw new Exception("Error al cargar el libro");
+            }
+            return wb;
+
+
+
+        } catch (Exception e) {
+            Log.e("InventarioBodega", "Error cargando Inventario.xlsx", e);
+            alertDialog = showAlert(context, "Error, Excel de Inventario no encontrado, por favor abra el excel desde el correo usando esta app.");
+            Methods.setFinishActivityOnDismiss(alertDialog);
+            alertDialog.show();
+            return null;
+        }
+    }
+
+
 
     //validate no empty fields on forms
     public static boolean validateEmptyStringArray(String[] fields) {

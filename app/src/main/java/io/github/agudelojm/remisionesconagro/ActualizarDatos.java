@@ -47,6 +47,9 @@ public class ActualizarDatos {
             case "Cliente":
                 Methods.saveWorkbook(context, wb,"Cliente.xlsx");
                 break;
+            case "Inventario":
+                Methods.saveWorkbook(context, wb,"Inventario.xlsx");
+                break;
 
             default:
                 alertDialog = Methods.showAlert(context, "Error del excel, Solicite su revisión a un Administrador, y que se reenvie corregido");

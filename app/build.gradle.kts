@@ -4,14 +4,12 @@ plugins {
 
 android {
     namespace = "io.github.agudelojm.remisionesconagro"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "io.github.agudelojm.remisionesconagro"
         minSdk = 30
-        targetSdk = 36
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
 
@@ -43,4 +41,5 @@ dependencies {
     androidTestImplementation(libs.espresso.core)
     implementation("org.apache.poi:poi:5.5.1")
     implementation("org.apache.poi:poi-ooxml:5.5.1")
+    implementation("com.github.gcacace:signature-pad:1.3.1")
 }
