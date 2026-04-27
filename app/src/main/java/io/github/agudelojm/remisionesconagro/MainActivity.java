@@ -1,12 +1,10 @@
 package io.github.agudelojm.remisionesconagro;
 
-import android.os.Bundle;
-
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Bundle;
 import android.util.Log;
-import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 
@@ -16,90 +14,87 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import org.apache.poi.ss.usermodel.Workbook;
+import java.util.HashMap;
 
-import java.io.FileInputStream;
-import java.util.Objects;
-
+/**
+ * Entry point of the application. Handles login and initial data loading/updates.
+ */
 public class MainActivity extends AppCompatActivity {
 
+    private static final String TAG = "MainActivity";
     private AlertDialog alertDialog = null;
-
-    private Uri uri;
-
-    private FileInputStream fileInputStream;
-    Workbook wb;
-
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-
         super.onCreate(savedInstanceState);
         EdgeToEdge.enable(this);
-        Log.w("INICIA A CREAR LA ACTIVIDAD", "inicia actividad");
+
+        // Required System properties for Apache POI to work correctly on Android
         System.setProperty("org.apache.poi.javax.xml.stream.XMLInputFactory", "com.fasterxml.aalto.stax.InputFactoryImpl");
         System.setProperty("org.apache.poi.javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl");
         System.setProperty("org.apache.poi.javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl");
         System.setProperty("org.apache.poi.ss.ignoreMissingFontSystem", "true");
-        Methods.updateActivity(this);
-
 
         setContentView(R.layout.activity_main);
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
-
             return insets;
         });
 
-        Log.w("WB", "crea actividad");
+        Methods.updateActivity(this);
 
-
+        // Handle intent for opening Excel files via the app
         Intent intent = getIntent();
-        uri = intent.getData();
+        Uri uri = intent.getData();
         if (uri != null && !uri.equals(Uri.EMPTY)) {
-            String name = ActualizarDatos.setFileInputStream(this, uri);
-            alertDialog = Methods.showAlert(this, "Excel de "+name+" Actualizado con éxito");
-            alertDialog.setOnDismissListener(dialogInterface -> {
+            try {
+                String name = ActualizarDatos.setFileInputStream(this, uri);
+                alertDialog = Methods.showAlert(this, "Excel de " + name + " actualizado con éxito");
+                alertDialog.setOnDismissListener(dialogInterface -> Methods.initializeData(this));
+                alertDialog.show();
+            } catch (Exception e) {
+                Log.e(TAG, "Error updating data from URI", e);
                 Methods.initializeData(this);
-            });
-            alertDialog.show();
-        } else{
+            }
+        } else {
             Methods.initializeData(this);
         }
-        Log.w("inicializa exceles", "");
 
+        setupUI();
+    }
 
-        Button btnLogin = this.findViewById(R.id.btn_login);
-        Button btnSalir = this.findViewById(R.id.btn_salir);
-        EditText edtUsername = this.findViewById(R.id.edt_username);
-        EditText edtPassword = this.findViewById(R.id.edp_password);
-        Log.w("if de credenciales", "inicializados btn y edt");
-        Log.w("tag", btnLogin.toString());
+    /**
+     * Links UI components and sets up listeners.
+     */
+    private void setupUI() {
+        Button btnLogin = findViewById(R.id.btn_login);
+        Button btnSalir = findViewById(R.id.btn_salir);
+        EditText edtUsername = findViewById(R.id.edt_username);
+        EditText edtPassword = findViewById(R.id.edp_password);
 
-        btnLogin.setOnClickListener((View v) ->
-        {
-            Log.w("tag", "inicia el onclicklistener");
-            String username = edtUsername.getText().toString();
-            String password = edtPassword.getText().toString();
-            var userData = Methods.validateCredentials(username, password);
-            if (userData.get("code").equals("1")) {
-                Log.w("login", "test exitoso");
+        btnLogin.setOnClickListener(v -> {
+            String username = edtUsername.getText().toString().trim();
+            String password = edtPassword.getText().toString().trim();
+            
+            HashMap<String, String> userData = Methods.validateCredentials(username, password);
+            String code = userData.get("code");
+
+            if ("1".equals(code)) {
                 Intent myIntent = new Intent(this, MenuActivity.class);
                 myIntent.putExtra("userData", userData);
-                this.startActivity(myIntent);
+                startActivity(myIntent);
                 finishAffinity();
             } else {
                 alertDialog = Methods.showAlert(this, userData.get("message"));
-                if (Objects.equals(userData.get("code"), "0")){
+                // Code "0" indicates a fatal formatting error requiring app closure
+                if ("0".equals(code)) {
                     Methods.setCloseAppOnDismiss(alertDialog);
                 }
                 alertDialog.show();
             }
         });
 
-        btnSalir.setOnClickListener((View v) -> finishAndRemoveTask());
-
-
+        btnSalir.setOnClickListener(v -> finishAndRemoveTask());
     }
 }

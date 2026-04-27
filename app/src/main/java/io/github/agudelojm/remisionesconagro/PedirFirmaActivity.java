@@ -1,6 +1,8 @@
 package io.github.agudelojm.remisionesconagro;
 
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
@@ -12,56 +14,105 @@ import androidx.core.content.FileProvider;
 import com.github.gcacace.signaturepad.views.SignaturePad;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.HashMap;
 
+/**
+ * Activity for capturing a digital signature and processing it based on the flow type.
+ */
 public class PedirFirmaActivity extends AppCompatActivity {
 
+    private static final String TAG = "PedirFirmaActivity";
     private SignaturePad mSignaturePad;
-    private Button mClearButton;
-    private Button mSaveButton;
+    private HashMap<String, String> userData;
+    private String flowType;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_pedir_firma);
 
+        Methods.updateActivity(this);
+
+        // Handle Intent Extras
+        Intent intent = getIntent();
+        Serializable serializable = intent.getSerializableExtra("userData");
+        if (serializable instanceof HashMap) {
+            userData = (HashMap<String, String>) serializable;
+        }
+        flowType = intent.getStringExtra("flowType");
+
         mSignaturePad = findViewById(R.id.signature_pad);
-        mClearButton = findViewById(R.id.btn_Borrar_Firma);
-        mSaveButton = findViewById(R.id.btn_Aceptar_Firma);
+        Button clearButton = findViewById(R.id.btn_Borrar_Firma);
+        Button saveButton = findViewById(R.id.btn_Aceptar_Firma);
 
-        mClearButton.setOnClickListener(view -> mSignaturePad.clear());
-
-        mSaveButton.setOnClickListener(view -> {
-            // Logic to handle signature if needed (saving as bitmap etc)
-            // For now, as per request, we proceed to send email and clean up
-            enviarEmailYFinalizar();
+        clearButton.setOnClickListener(view -> mSignaturePad.clear());
+        saveButton.setOnClickListener(view -> {
+            if (mSignaturePad.isEmpty()) {
+                Methods.showAlert(this, "Por favor, firme antes de continuar").show();
+            } else {
+                procesarFirma();
+            }
         });
     }
 
-    private void enviarEmailYFinalizar() {
-        // 1. Save InventarioWb as InventarioBodegaActual.xlsx
+    private void procesarFirma() {
+        File signatureFile = new File(getFilesDir(), "firma.png");
+        try (FileOutputStream out = new FileOutputStream(signatureFile)) {
+            Bitmap signatureBitmap = mSignaturePad.getSignatureBitmap();
+            signatureBitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving signature", e);
+            Methods.showAlert(this, "Error guardando la firma, intente nuevamente").show();
+            return;
+        }
+
+        if ("inventario".equals(flowType)) {
+            finalizarFlowInventario(signatureFile);
+        } else {
+            // Placeholder for future flows (e.g., "remision")
+            finalizarFlowGenerico(signatureFile);
+        }
+    }
+
+    private void finalizarFlowInventario(File signatureFile) {
+        // 1. Save local record
         Methods.saveWorkbook(this, Methods.getInventarioWb(), "InventarioBodegaActual.xlsx");
 
-        // 2. Send Email
-        Intent emailIntent = new Intent(Intent.ACTION_SEND);
-        emailIntent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        // 2. Email process
+        Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+        emailIntent.setType("message/rfc822");
         emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
-        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "");
-        emailIntent.putExtra(Intent.EXTRA_TEXT, "");
+        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Inventario de Bodega - " + 
+                (userData != null ? userData.getOrDefault("nombre", "") : ""));
+        emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto reporte de inventario y firma.");
 
-        File file = new File(getFilesDir(), "Inventario.xlsx");
-        if (file.exists()) {
-            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", file);
-            emailIntent.putExtra(Intent.EXTRA_STREAM, uri);
-            emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        ArrayList<Uri> uris = new ArrayList<>();
+        File excelFile = new File(getFilesDir(), "Inventario.xlsx");
+        
+        if (excelFile.exists()) {
+            uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", excelFile));
+        }
+        if (signatureFile.exists()) {
+            uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", signatureFile));
         }
 
-        // 3. Delete Inventario.xlsx and clear InventarioWb
-        if (file.exists()) {
-            file.delete();
-        }
-        Methods.setInventarioWb(null);
+        emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+        emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-        startActivity(Intent.createChooser(emailIntent, "Enviar Inventario Aceptado..."));
+        startActivity(Intent.createChooser(emailIntent, "Enviar Inventario..."));
+
+        // 3. Cleanup
+        if (excelFile.exists()) excelFile.delete();
+        if (signatureFile.exists()) signatureFile.delete();
+        Methods.setInventarioWbToNull();
+        finish();
+    }
+
+    private void finalizarFlowGenerico(File signatureFile) {
+        if (signatureFile.exists()) signatureFile.delete();
         finish();
     }
 }

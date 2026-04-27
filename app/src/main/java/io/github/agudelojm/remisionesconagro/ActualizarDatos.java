@@ -9,55 +9,59 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.FileInputStream;
+import java.util.Objects;
 
+/**
+ * Handles the update of internal Excel workbooks when a new file is opened via URI.
+ */
 public class ActualizarDatos {
 
-    private static FileInputStream fileInputStream;
+    private static final String TAG = "ActualizarDatos";
 
-    private static XSSFWorkbook wb;
-
-    private static AlertDialog alertDialog;
-
+    /**
+     * Loads a workbook from a given Uri and triggers the update process.
+     */
     public static String setFileInputStream(Context context, Uri uri) {
-        try {
-            fileInputStream = new FileInputStream(context.getContentResolver().openFileDescriptor(uri, "r").getFileDescriptor());
-            wb = Methods.loadWorkbook(context, fileInputStream);
-            fileInputStream.close();
-
+        try (FileInputStream fis = new FileInputStream(Objects.requireNonNull(context.getContentResolver().openFileDescriptor(uri, "r")).getFileDescriptor())) {
+            XSSFWorkbook wb = Methods.loadWorkbook(context, fis);
+            if (wb != null) {
+                checkWorkbookType(context, wb);
+                return wb.getSheetAt(1).getSheetName();
+            }
         } catch (Exception e) {
-            Log.w("Error leyendo", e.toString());
-
+            Log.e(TAG, "Error processing input stream from URI", e);
         }
-        Log.w("contenidoWB", wb.getSheetAt(1).getRow(0).getCell(0).toString() );
-        checkWorkbookType(context);
-        return wb.getSheetAt(1).getSheetName();
-
+        return "Desconocido";
     }
 
-    private static void checkWorkbookType(Context context){
+    /**
+     * Determines the type of workbook by its sheet name and saves it accordingly.
+     */
+    private static void checkWorkbookType(Context context, XSSFWorkbook wb) {
         Sheet sheet = wb.getSheetAt(1);
         String sheetName = sheet.getSheetName();
-        switch (sheetName){
+        
+        String fileName;
+        switch (sheetName) {
             case "Tecnico":
-                Methods.saveWorkbook(context, wb,"Tecnico.xlsx");
+                fileName = "Tecnico.xlsx";
                 break;
             case "Producto":
-                Methods.saveWorkbook(context, wb,"Producto.xlsx");
+                fileName = "Producto.xlsx";
                 break;
             case "Cliente":
-                Methods.saveWorkbook(context, wb,"Cliente.xlsx");
+                fileName = "Cliente.xlsx";
                 break;
             case "Inventario":
-                Methods.saveWorkbook(context, wb,"Inventario.xlsx");
+                fileName = "Inventario.xlsx";
                 break;
-
             default:
-                alertDialog = Methods.showAlert(context, "Error del excel, Solicite su revisión a un Administrador, y que se reenvie corregido");
+                AlertDialog alertDialog = Methods.showAlert(context, "Error del excel. Solicite revisión a un Administrador.");
                 Methods.setCloseAppOnDismiss(alertDialog);
                 alertDialog.show();
-                break;
-        };
+                return;
+        }
+        
+        Methods.saveWorkbook(context, wb, fileName);
     }
-
-
 }

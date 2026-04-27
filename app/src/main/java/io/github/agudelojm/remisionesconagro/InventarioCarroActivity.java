@@ -20,26 +20,23 @@ import androidx.core.view.WindowInsetsCompat;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Activity to manage the Vehicle Inventory. Allows adding, removing, and clearing items.
+ */
 public class InventarioCarroActivity extends AppCompatActivity {
 
-    // UI Components
     private EditText edtID, edtCantidad;
-    private Button btnAnadir, btnVaciar;
     private TableLayout tlyTabla;
-    private String[] userData;
-    private AlertDialog alertDialog;
-
-    // Data Structure: Key = Product ID, Value = Quantity
-    // This handles the "merge same ID" logic automatically
     private HashMap<String, Integer> inventarioData = new HashMap<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-
-
         super.onCreate(savedInstanceState);
         EdgeToEdge.enable(this);
-        setContentView(R.layout.activity_menu);
+        
+        // Error fix: Use correct layout instead of activity_menu
+        setContentView(R.layout.activity_inventario_carro);
+        
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
@@ -47,102 +44,74 @@ public class InventarioCarroActivity extends AppCompatActivity {
         });
 
         Methods.updateActivity(this);
-
-        userData = getIntent().getStringArrayExtra("userData");
-
         initViews();
         setupListeners();
     }
 
-    /**
-     * Link Java objects to XML IDs
-     */
     private void initViews() {
         edtID = findViewById(R.id.edt_IDProducto_Inventario_Carro);
         edtCantidad = findViewById(R.id.edt_Cantidad_Inventario_Carro);
-        btnAnadir = findViewById(R.id.btn_Anadir_Inventario_Carro);
-        btnVaciar = findViewById(R.id.btn_Vaciar_Inventario_Carro);
         tlyTabla = findViewById(R.id.tly_TablaDatos_Inventario_Carro);
     }
 
-    /**
-     * Setup button click actions
-     */
     private void setupListeners() {
-        btnAnadir.setOnClickListener(v -> procesarEntrada());
-        btnVaciar.setOnClickListener(v -> vaciarInventarioCompleto());
+        findViewById(R.id.btn_Anadir_Inventario_Carro).setOnClickListener(v -> procesarEntrada());
+        findViewById(R.id.btn_Vaciar_Inventario_Carro).setOnClickListener(v -> vaciarInventarioCompleto());
     }
 
-    /**
-     * Collects input, validates it, and updates the data structure
-     */
     private void procesarEntrada() {
         String id = edtID.getText().toString().trim();
         String cantStr = edtCantidad.getText().toString().trim();
 
         if (id.isEmpty() || cantStr.isEmpty()) {
-            alertDialog = Methods.showAlert(this, "Por favor complete todos los campos");
-            alertDialog.show();
+            Methods.showAlert(this, "Por favor complete todos los campos").show();
             return;
         }
 
-        // Validate if product exists in database
         String productName = Methods.getProductoName(this, id);
         if (productName == null) {
-            alertDialog = Methods.showAlert(this, "Error: Producto con ID " + id + " no encontrado");
-            alertDialog.show();
+            Methods.showAlert(this, "Error: Producto con ID " + id + " no encontrado").show();
             return;
         }
 
-        int nuevaCantidad = Integer.parseInt(cantStr);
-
-        // LOGIC: If ID exists, add to current quantity. If not, create new.
-        if (inventarioData.containsKey(id)) {
-            int cantidadActual = inventarioData.get(id);
-            inventarioData.put(id, cantidadActual + nuevaCantidad);
-        } else {
-            inventarioData.put(id, nuevaCantidad);
+        int nuevaCantidad;
+        try {
+            nuevaCantidad = Integer.parseInt(cantStr);
+        } catch (NumberFormatException e) {
+            Methods.showAlert(this, "Cantidad inválida").show();
+            return;
         }
+
+        // Add to map (merging quantities if ID exists)
+        inventarioData.put(id, inventarioData.getOrDefault(id, 0) + nuevaCantidad);
 
         actualizarTablaUI();
         limpiarInputs();
     }
 
-    /**
-     * Refreshes the TableLayout based on the current HashMap
-     */
     private void actualizarTablaUI() {
-        // 1. Clear all rows except the header (Index 0)
         int childCount = tlyTabla.getChildCount();
         if (childCount > 1) {
             tlyTabla.removeViews(1, childCount - 1);
         }
 
-        // 2. Iterate through data and create rows
         for (Map.Entry<String, Integer> entry : inventarioData.entrySet()) {
             String id = entry.getKey();
-            String cantidad = String.valueOf(entry.getValue());
-            String nombreProducto = Methods.getProductoName(this, id);
+            String qty = String.valueOf(entry.getValue());
+            String name = Methods.getProductoName(this, id);
 
             TableRow row = new TableRow(this);
             row.setPadding(0, 10, 0, 10);
 
-            // Column 1: ID
             row.addView(crearTextViewCelda(id, 1f));
-            // Column 2: Name
-            row.addView(crearTextViewCelda(nombreProducto != null ? nombreProducto : "No encontrado", 1f));
-            // Column 3: Quantity
-            row.addView(crearTextViewCelda(cantidad, 1f));
-            // Column 4: Delete Button
+            row.addView(crearTextViewCelda(name != null ? name : "Error", 1f));
+            row.addView(crearTextViewCelda(qty, 1f));
             row.addView(crearBotonEliminar(id));
 
             tlyTabla.addView(row);
         }
     }
 
-    /**
-     * Helper to create styled TextViews for table cells
-     */
     private TextView crearTextViewCelda(String texto, float weight) {
         TextView tv = new TextView(this);
         tv.setText(texto);
@@ -151,30 +120,22 @@ public class InventarioCarroActivity extends AppCompatActivity {
         return tv;
     }
 
-    /**
-     * Helper to create the delete button for each row
-     */
     private View crearBotonEliminar(String idAEliminar) {
         ImageButton btnBorrar = new ImageButton(this);
-
-        // Using a standard Android system icon for the trash can
         btnBorrar.setImageResource(android.R.drawable.ic_menu_delete);
         btnBorrar.setBackgroundColor(Color.TRANSPARENT);
         btnBorrar.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 1f));
-
         btnBorrar.setOnClickListener(v -> {
             inventarioData.remove(idAEliminar);
             actualizarTablaUI();
         });
-
         return btnBorrar;
     }
 
     private void vaciarInventarioCompleto() {
         inventarioData.clear();
         actualizarTablaUI();
-        alertDialog = Methods.showAlert(this, "Inventario vaciado");
-        alertDialog.show();
+        Methods.showAlert(this, "Inventario vaciado").show();
     }
 
     private void limpiarInputs() {
