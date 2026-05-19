@@ -1,6 +1,5 @@
 package io.github.agudelojm.remisionesconagro;
 
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
@@ -29,7 +28,6 @@ public class InventarioBodegaActivity extends AppCompatActivity {
 
     private static final String TAG = "InventarioBodegaAct";
     private TableLayout tlyTabla;
-    private AlertDialog alertDialog;
     private HashMap<String, String> userData;
     private XSSFWorkbook inventarioWb;
 
@@ -57,9 +55,8 @@ public class InventarioBodegaActivity extends AppCompatActivity {
         if (serializable instanceof HashMap) {
             userData = (HashMap<String, String>) serializable;
         } else {
-            alertDialog = Methods.showAlert(this, "Error recopilando datos del usuario, pongase en contacto con un administrador");
-            Methods.setCloseAppOnDismiss(alertDialog);
-            alertDialog.show();
+            Methods.showFatalError(this, "Error recopilando datos del usuario, pongase en contacto con un administrador");
+            return;
         }
         
         setupUI();
@@ -93,9 +90,7 @@ public class InventarioBodegaActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error loading inventory", e);
-            alertDialog = Methods.showAlert(this, "Error inesperado, comuniquese con un administrador");
-            Methods.setCloseAppOnDismiss(alertDialog);
-            alertDialog.show();
+            Methods.showFatalError(this, "Error inesperado, comuniquese con un administrador");
         }
     }
 
@@ -113,9 +108,7 @@ public class InventarioBodegaActivity extends AppCompatActivity {
             }
 
             if (idxItem == -1 || idxNombre == -1 || idxCant == -1) {
-                alertDialog = Methods.showAlert(this, "Error de formato en el Excel de Inventario.");
-                Methods.setFinishActivityOnDismiss(alertDialog);
-                alertDialog.show();
+                Methods.showErrorAndFinishActivity(this, "Error de formato en el Excel de Inventario.");
                 return;
             }
 

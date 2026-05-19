@@ -59,7 +59,11 @@ public class PedirFirmaActivity extends AppCompatActivity {
     }
 
     private void procesarFirma() {
-        File signatureFile = new File(getFilesDir(), "firma.png");
+        String fileName = "firma.png";
+        if ("remision_tecnico".equals(flowType)) fileName = "firma_tecnico.png";
+        else if ("remision_cliente".equals(flowType)) fileName = "firma_cliente.png";
+
+        File signatureFile = new File(getFilesDir(), fileName);
         try (FileOutputStream out = new FileOutputStream(signatureFile)) {
             Bitmap signatureBitmap = mSignaturePad.getSignatureBitmap();
             signatureBitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
@@ -71,8 +75,12 @@ public class PedirFirmaActivity extends AppCompatActivity {
 
         if ("inventario".equals(flowType)) {
             finalizarFlowInventario(signatureFile);
+        } else if (flowType != null && flowType.startsWith("remision_")) {
+            Intent data = new Intent();
+            data.putExtra("flowType", flowType);
+            setResult(RESULT_OK, data);
+            finish();
         } else {
-            // Placeholder for future flows (e.g., "remision")
             finalizarFlowGenerico(signatureFile);
         }
     }

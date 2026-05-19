@@ -16,4 +16,7 @@
     <string name="inventario_bodega">Inventario Bodega</string>
     <string name="reporte">Reporte</string>
     <string name="cerrar_sesi_n">Cerrar Sesión</string>
+    <string name="correo">Correo</string>
+    <string name="cedula">Cédula</string>
+    <string name="referencia">Referencia</string>
 </resources>

@@ -6,9 +6,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:layout_margin="32dp"
-    tools:context=".MainActivity"
-    tools:layout_editor_absoluteX="32dp"
-    tools:layout_editor_absoluteY="32dp">
+    tools:context=".MainActivity">
 
     <Button
         android:id="@+id/btn_login"
@@ -36,7 +34,7 @@
         android:layout_marginEnd="32dp"
         android:background="@color/blue"
         android:gravity="center"
-        android:text="@string/usuario"
+        android:text="@string/correo"
         android:textColor="@color/white"
         android:textSize="24sp"
         android:textStyle="bold"
@@ -70,7 +68,7 @@
         android:layout_marginEnd="32dp"
         android:background="@color/blue"
         android:gravity="center"
-        android:text="@string/contrase_a"
+        android:text="@string/cedula"
         android:textColor="@color/white"
         android:textSize="24sp"
         android:textStyle="bold"
@@ -88,12 +86,11 @@
         android:layout_height="85dp"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
-        android:autofillHints="usuario"
+        android:autofillHints="emailAddress"
         android:ems="10"
-
         android:textColor="@color/black"
         android:textColorHint="@color/black"
-        android:inputType="text"
+        android:inputType="textEmailAddress"
         android:translationY="-40dp"
         app:layout_constraintBottom_toTopOf="@+id/tvw_password"
         app:layout_constraintEnd_toEndOf="parent"
@@ -108,10 +105,9 @@
         android:layout_height="85dp"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
-        android:autofillHints="contraseña"
+        android:autofillHints="password"
         android:ems="10"
-
-        android:inputType="textPassword"
+        android:inputType="numberPassword"
         android:textColor="@color/black"
         android:textColorHint="@color/black"
         android:translationY="-80dp"

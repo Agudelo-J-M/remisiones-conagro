@@ -12,6 +12,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RemisionesCoonagro">
         <activity
+            android:name=".IngresarRemisionActivity"
+            android:exported="false" />
+        <activity
             android:name=".RechazarInventarioBodegaActivity"
             android:exported="false" />
         <activity

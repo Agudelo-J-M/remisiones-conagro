@@ -79,19 +79,18 @@ public class MainActivity extends AppCompatActivity {
             
             HashMap<String, String> userData = Methods.validateCredentials(username, password);
             String code = userData.get("code");
+            String message = userData.get("message");
 
             if ("1".equals(code)) {
                 Intent myIntent = new Intent(this, MenuActivity.class);
                 myIntent.putExtra("userData", userData);
                 startActivity(myIntent);
                 finishAffinity();
-            } else {
-                alertDialog = Methods.showAlert(this, userData.get("message"));
+            } else if ("0".equals(code)) {
                 // Code "0" indicates a fatal formatting error requiring app closure
-                if ("0".equals(code)) {
-                    Methods.setCloseAppOnDismiss(alertDialog);
-                }
-                alertDialog.show();
+                Methods.showFatalError(this, message);
+            } else {
+                Methods.showAlert(this, message).show();
             }
         });
 

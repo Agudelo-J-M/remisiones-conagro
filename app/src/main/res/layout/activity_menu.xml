@@ -118,6 +118,8 @@
             app:layout_constraintHorizontal_bias="0.5"
             app:layout_constraintStart_toStartOf="parent"
             tools:layout_editor_absoluteY="346dp" />
+
+        <!--
         <Button
             android:id="@+id/btn_CambiarConsecutivo"
             style="@style/Widget.AppCompat.Button"
@@ -133,6 +135,7 @@
             app:layout_constraintHorizontal_bias="0.5"
             app:layout_constraintStart_toStartOf="parent"
             tools:layout_editor_absoluteY="432dp" />
+        -->
 
         <Button
             android:id="@+id/btn_cerrarSesion"
@@ -150,6 +153,7 @@
             app:layout_constraintStart_toStartOf="parent"
             tools:layout_editor_absoluteY="496dp" />
 
+        <!--
         <TextView
             android:id="@+id/tvw_consecutivo_menu"
             android:layout_width="match_parent"
@@ -160,6 +164,7 @@
             android:gravity="center"
             android:textColor="@color/black"
             android:textStyle="bold" />
+        -->
 
     </LinearLayout>
 
