@@ -14,6 +14,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -23,6 +24,7 @@ import java.util.HashMap;
 
 /**
  * Activity for displaying and handling the Warehouse Inventory.
+ * Adjusted to handle the CSV format headers: cod_suc, cod_bod, ano, referencia, nombre, saldo.
  */
 public class InventarioBodegaActivity extends AppCompatActivity {
 
@@ -84,9 +86,16 @@ public class InventarioBodegaActivity extends AppCompatActivity {
 
     private void cargarInventario() {
         try {
-            inventarioWb = Methods.loadInventarioWb(this);
+            // Priority to the globally loaded template for consistency
+            inventarioWb = Methods.getInventarioWb();
+            if (inventarioWb == null) {
+                inventarioWb = Methods.loadInventarioWb(this);
+            }
+            
             if (inventarioWb != null) {
                 poblarTabla(inventarioWb);
+            } else {
+                Methods.showAlert(this, "Advertencia: El archivo 'Inventario.xlsx' no está cargado.").show();
             }
         } catch (Exception e) {
             Log.e(TAG, "Error loading inventory", e);
@@ -96,28 +105,39 @@ public class InventarioBodegaActivity extends AppCompatActivity {
 
     private void poblarTabla(XSSFWorkbook wb) {
         try {
-            Sheet sheet = wb.getSheetAt(1);
+            // Priotitize the "Inventario" sheet name, fallback to first sheet
+            Sheet sheet = wb.getSheet("Inventario");
+            if (sheet == null) sheet = wb.getSheetAt(0);
+
             int idxItem = -1, idxNombre = -1, idxCant = -1;
+            DataFormatter df = Methods.getDataFormatter();
 
             Row header = sheet.getRow(0);
+            if (header == null) {
+                Methods.showErrorAndFinishActivity(this, "El archivo de inventario está vacío.");
+                return;
+            }
+
             for (org.apache.poi.ss.usermodel.Cell cell : header) {
-                String val = cell.toString().toLowerCase();
-                if (val.contains("item")) idxItem = cell.getColumnIndex();
+                String val = df.formatCellValue(cell).toLowerCase().trim();
+                // Map CSV headers to logic: referencia -> item, nombre -> nombre, saldo -> cantidad
+                if (val.contains("referencia")) idxItem = cell.getColumnIndex();
                 else if (val.contains("nombre")) idxNombre = cell.getColumnIndex();
-                else if (val.contains("cantidad")) idxCant = cell.getColumnIndex();
+                else if (val.contains("saldo")) idxCant = cell.getColumnIndex();
             }
 
             if (idxItem == -1 || idxNombre == -1 || idxCant == -1) {
-                Methods.showErrorAndFinishActivity(this, "Error de formato en el Excel de Inventario.");
+                Methods.showErrorAndFinishActivity(this, "Error de formato en el Excel de Inventario (Faltan columnas: referencia, nombre o saldo).");
                 return;
             }
 
             for (Row row : sheet) {
                 if (row.getRowNum() == 0) continue;
 
-                String id = row.getCell(idxItem).toString();
-                String name = row.getCell(idxNombre).toString();
-                String qty = row.getCell(idxCant).toString();
+                // Use DataFormatter to prevent corrupted scientific notation on numeric IDs
+                String id = df.formatCellValue(row.getCell(idxItem));
+                String name = df.formatCellValue(row.getCell(idxNombre));
+                String qty = df.formatCellValue(row.getCell(idxCant));
 
                 TableRow tableRow = new TableRow(this);
                 tableRow.setPadding(0, 10, 0, 10);

@@ -9,7 +9,9 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
+import java.io.BufferedReader;
 import java.io.FileInputStream;
+import java.io.InputStreamReader;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -26,15 +28,52 @@ public class ActualizarDatos {
      * Loads a workbook from a given Uri and triggers the update process after validation.
      */
     public static String setFileInputStream(Context context, Uri uri) {
-        try (FileInputStream fis = new FileInputStream(Objects.requireNonNull(context.getContentResolver().openFileDescriptor(uri, "r")).getFileDescriptor())) {
-            XSSFWorkbook wb = Methods.loadWorkbook(context, fis);
-            if (wb != null) {
-                return processAndValidateWorkbook(context, wb);
+        String fileName = Methods.getFileName(context, uri).toLowerCase();
+        
+        try {
+            if (fileName.endsWith(".csv")) {
+                return processCsvInventory(context, uri);
+            }
+
+            try (FileInputStream fis = new FileInputStream(Objects.requireNonNull(context.getContentResolver().openFileDescriptor(uri, "r")).getFileDescriptor())) {
+                XSSFWorkbook wb = Methods.loadWorkbook(context, fis);
+                if (wb != null) {
+                    return processAndValidateWorkbook(context, wb);
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "Error processing input stream from URI", e);
         }
         return "Desconocido";
+    }
+
+    /**
+     * Converts an incoming CSV inventory file into the internal "Inventario.xlsx" format.
+     */
+    private static String processCsvInventory(Context context, Uri uri) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(context.getContentResolver().openInputStream(uri)))) {
+            XSSFWorkbook wb = new XSSFWorkbook();
+            Sheet sheet = wb.createSheet("Inventario");
+            
+            String line;
+            int rowCount = 0;
+            while ((line = reader.readLine()) != null) {
+                // Split by comma or semicolon depending on CSV style
+                String[] columns = line.split("[,;]");
+                Row row = sheet.createRow(rowCount++);
+                for (int i = 0; i < columns.length; i++) {
+                    Cell cell = row.createCell(i);
+                    cell.setCellValue(columns[i].replace("\"", "").trim());
+                }
+            }
+            
+            Methods.saveWorkbook(context, wb, "Inventario.xlsx");
+            return "Inventario (CSV)";
+        } catch (Exception e) {
+            Log.e(TAG, "Error converting CSV to XLSX", e);
+            Methods.showFatalError(context, "Error procesando el archivo CSV de Inventario.");
+            return "Error CSV";
+        }
     }
 
     /**
@@ -49,7 +88,7 @@ public class ActualizarDatos {
             }
         } 
         // Identify if it's an inventory file
-        else if (wb.getSheet("Inventario") != null) {
+        else if (wb.getSheet("Inventario") != null || wb.getNumberOfSheets() > 0) {
             Methods.saveWorkbook(context, wb, "Inventario.xlsx");
             return "Inventario";
         } 

@@ -53,7 +53,7 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         // 1. Prepare Email
         Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
         emailIntent.setType("message/rfc822");
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
+        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""}); // Empty recipient as requested
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Rechazo de Inventario - " + 
                 (userData != null ? userData.getOrDefault("nombre", "") : ""));
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Motivo de rechazo: " + motivo);
@@ -68,9 +68,8 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
         emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-        // 2. Cleanup and Start
-        if (file.exists()) file.delete();
-        Methods.setInventarioWbToNull();
+        // 2. State Reset (Not deleting the file anymore as requested)
+        // Methods.setInventarioWbToNull(); // Removed to keep it as template for InventarioCarro
 
         startActivity(Intent.createChooser(emailIntent, "Enviar Motivo de Rechazo..."));
         finish();

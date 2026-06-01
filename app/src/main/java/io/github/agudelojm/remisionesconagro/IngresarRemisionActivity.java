@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -20,6 +21,7 @@ import android.widget.TextView;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.FileProvider;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -293,12 +295,32 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         Bitmap bTecnico = BitmapFactory.decodeFile(fileT.getAbsolutePath());
         Bitmap bCliente = BitmapFactory.decodeFile(fileC.getAbsolutePath());
 
-        Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bTecnico, bCliente);
+        File pdfFile = Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bTecnico, bCliente);
         
         // Clean up PNGs
         if (fileT.exists()) fileT.delete();
         if (fileC.exists()) fileC.delete();
         
+        if (pdfFile != null && pdfFile.exists()) {
+            enviarRemisionPorEmail(pdfFile);
+        } else {
+            Methods.showAlert(this, "Error generando el PDF de remisión.").show();
+        }
+    }
+
+    private void enviarRemisionPorEmail(File pdfFile) {
+        Intent emailIntent = new Intent(Intent.ACTION_SEND);
+        emailIntent.setType("application/pdf");
+        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
+        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión " + consecutivo + " - " + 
+                fincaActual.getOrDefault("finca_nombre", ""));
+        emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto remisión generada.");
+
+        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", pdfFile);
+        emailIntent.putExtra(Intent.EXTRA_STREAM, uri);
+        emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+        startActivity(Intent.createChooser(emailIntent, "Enviar Remisión..."));
         finish();
     }
 

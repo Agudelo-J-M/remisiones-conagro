@@ -3,19 +3,27 @@ package io.github.agudelojm.remisionesconagro;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.pdf.PdfDocument;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.OpenableColumns;
 import android.util.Log;
 
 import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.ClientAnchor;
+import org.apache.poi.ss.usermodel.CreationHelper;
 import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Drawing;
+import org.apache.poi.ss.usermodel.Picture;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.File;
@@ -87,9 +95,22 @@ public class Methods {
                     throw new Exception("Error de formato: faltan hojas en 'Datos App.xlsx'");
                 }
 
+                // Load Inventory (Template for validations)
+                try {
+                    inventarioWb = loadWorkbookFromFile(context, "Inventario.xlsx");
+                } catch (Exception e) {
+                    Log.w(TAG, "Inventario.xlsx could not be loaded on startup: " + e.getMessage());
+                }
+
                 alertDialog.dismiss();
                 alertDialog = showAlert(context, "Éxito leyendo Exceles");
+                if (inventarioWb == null) {
+                    alertDialog.setMessage("Éxito leyendo Base de Datos. Nota: No se encontró 'Inventario.xlsx', las validaciones de stock estarán deshabilitadas.");
+                }
                 alertDialog.show();
+                
+                // Perform cleanup of old referrals
+                cleanOldRemisiones(context);
 
             } catch (Exception e) {
                 Log.e(TAG, "Error initializing data: " + e.getMessage());
@@ -99,6 +120,26 @@ public class Methods {
                 showFatalError(context, errorMsg);
             }
         }, 1250);
+    }
+
+    /**
+     * Deletes referral PDFs older than 30 days.
+     */
+    public static void cleanOldRemisiones(Context context) {
+        File dir = context.getFilesDir();
+        File[] files = dir.listFiles((d, name) -> name.startsWith("Remision_") && name.endsWith(".pdf"));
+        if (files == null) return;
+
+        long oneMonthMillis = 30L * 24 * 60 * 60 * 1000;
+        long now = System.currentTimeMillis();
+
+        for (File file : files) {
+            if (now - file.lastModified() > oneMonthMillis) {
+                if (file.delete()) {
+                    Log.d(TAG, "Deleted old referral: " + file.getName());
+                }
+            }
+        }
     }
 
     /**
@@ -253,9 +294,9 @@ public class Methods {
     }
 
     /**
-     * Searches for a product name by its reference ID in the Productos sheet.
+     * Searches for a product info by its reference or name in the Productos sheet.
      */
-    public static String getProductoName(Context context, String referencia) {
+    public static Map<String, String> getProductoDetails(Context context, String query) {
         try {
             if (productosSheet == null) throw new Exception("Productos sheet not initialized");
             int idxRef = getColumnIndex(productosSheet, "referencia");
@@ -265,15 +306,29 @@ public class Methods {
 
             for (Row row : productosSheet) {
                 if (row.getRowNum() == 0) continue;
-                if (referencia.equals(dataFormatter.formatCellValue(row.getCell(idxRef)))) {
-                    return dataFormatter.formatCellValue(row.getCell(idxNombre));
+                String ref = dataFormatter.formatCellValue(row.getCell(idxRef));
+                String name = dataFormatter.formatCellValue(row.getCell(idxNombre));
+                
+                if (query.equalsIgnoreCase(ref) || query.equalsIgnoreCase(name)) {
+                    Map<String, String> map = new HashMap<>();
+                    map.put("referencia", ref);
+                    map.put("nombre", name);
+                    return map;
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error fetching product name", e);
-            showFatalError(context, "Error inesperado, comuniquese con un administrador");
+            Log.e(TAG, "Error fetching product details", e);
         }
         return null;
+    }
+
+    /**
+     * Searches for a product name by its reference ID in the Productos sheet.
+     * Kept for backward compatibility.
+     */
+    public static String getProductoName(Context context, String referencia) {
+        Map<String, String> details = getProductoDetails(context, referencia);
+        return details != null ? details.get("nombre") : null;
     }
 
     /**
@@ -282,11 +337,9 @@ public class Methods {
     public static XSSFWorkbook loadInventarioWb(Context context) {
         try {
             inventarioWb = loadWorkbookFromFile(context, "Inventario.xlsx");
-            if (inventarioWb == null) throw new Exception("Archivo 'Inventario.xlsx' no encontrado");
             return inventarioWb;
         } catch (Exception e) {
             Log.e(TAG, "Error loading Inventario.xlsx", e);
-            showErrorAndFinishActivity(context, "Error, Excel de Inventario no encontrado.");
             return null;
         }
     }
@@ -294,6 +347,73 @@ public class Methods {
     public static XSSFWorkbook getInventarioWb() { return inventarioWb; }
     
     public static void setInventarioWbToNull() { inventarioWb = null; }
+
+    public static DataFormatter getDataFormatter() { return dataFormatter; }
+
+    /**
+     * Resolves the filename from a given Uri using ContentResolver.
+     */
+    public static String getFileName(Context context, Uri uri) {
+        String result = null;
+        if ("content".equals(uri.getScheme())) {
+            try (Cursor cursor = context.getContentResolver().query(uri, null, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    if (idx != -1) result = cursor.getString(idx);
+                }
+            }
+        }
+        if (result == null) {
+            result = uri.getPath();
+            if (result != null) {
+                int cut = result.lastIndexOf('/');
+                if (cut != -1) result = result.substring(cut + 1);
+            }
+        }
+        return result != null ? result : "Desconocido";
+    }
+
+    /**
+     * Searches for an item in the Inventory Workbook and returns its stock (saldo).
+     * Returns -1.0 if the item is not found or sheet is invalid.
+     */
+    public static double getInventarioSaldo(String idOrName) {
+        if (inventarioWb == null) return -1.0;
+        try {
+            Sheet sheet = inventarioWb.getSheet("Inventario");
+            if (sheet == null) sheet = inventarioWb.getSheetAt(0);
+            
+            int idxRef = -1, idxNombre = -1, idxSaldo = -1;
+            Row header = sheet.getRow(0);
+            for (Cell cell : header) {
+                String val = cell.toString().toLowerCase().trim();
+                if (val.contains("referencia")) idxRef = cell.getColumnIndex();
+                else if (val.contains("nombre")) idxNombre = cell.getColumnIndex();
+                else if (val.contains("saldo")) idxSaldo = cell.getColumnIndex();
+            }
+
+            if (idxRef == -1 || idxNombre == -1 || idxSaldo == -1) return -1.0;
+
+            for (Row row : sheet) {
+                if (row.getRowNum() == 0) continue;
+                String ref = dataFormatter.formatCellValue(row.getCell(idxRef));
+                String nom = dataFormatter.formatCellValue(row.getCell(idxNombre));
+                
+                if (idOrName.equalsIgnoreCase(ref) || idOrName.equalsIgnoreCase(nom)) {
+                    String saldoStr = dataFormatter.formatCellValue(row.getCell(idxSaldo));
+                    try {
+                        // Handle potential comma as decimal separator in Spanish formats
+                        return Double.parseDouble(saldoStr.replace(",", "."));
+                    } catch (Exception e) {
+                        return 0.0;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error fetching stock from inventarioWb", e);
+        }
+        return -1.0;
+    }
 
     public static boolean validateEmptyStringArray(String[] fields) {
         for (String s : fields) if (s == null || s.isEmpty()) return true;
@@ -406,7 +526,26 @@ public class Methods {
         return -1;
     }
 
-    public static void generarPDFRemision(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, Bitmap firmaTecnico, Bitmap firmaCliente) {
+    /**
+     * Inserts an image into a specific cell of the workbook.
+     */
+    public static void insertImageToWorkbook(Workbook wb, byte[] imageBytes, int sheetIndex, int row, int col) {
+        try {
+            int pictureIdx = wb.addPicture(imageBytes, Workbook.PICTURE_TYPE_PNG);
+            CreationHelper helper = wb.getCreationHelper();
+            Sheet sheet = wb.getSheetAt(sheetIndex);
+            Drawing<?> drawing = sheet.createDrawingPatriarch();
+            ClientAnchor anchor = helper.createClientAnchor();
+            anchor.setCol1(col);
+            anchor.setRow1(row);
+            Picture pict = drawing.createPicture(anchor, pictureIdx);
+            pict.resize(0.5); // Adjust size as needed
+        } catch (Exception e) {
+            Log.e(TAG, "Error inserting image to workbook", e);
+        }
+    }
+
+    public static File generarPDFRemision(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, Bitmap firmaTecnico, Bitmap firmaCliente) {
         PdfDocument document = new PdfDocument();
         PdfDocument.PageInfo pageInfo = new PdfDocument.PageInfo.Builder(595, 842, 1).create(); // A4
         PdfDocument.Page page = document.startPage(pageInfo);
@@ -523,11 +662,12 @@ public class Methods {
         File file = new File(context.getFilesDir(), "Remision_" + consecutivo + ".pdf");
         try {
             document.writeTo(new FileOutputStream(file));
-            showAlert(context, "PDF Guardado en: " + file.getAbsolutePath()).show();
+            Log.d(TAG, "PDF saved: " + file.getAbsolutePath());
         } catch (Exception e) {
             Log.e(TAG, "Error writing PDF", e);
-            showAlert(context, "Error guardando PDF").show();
+            file = null;
         }
         document.close();
+        return file;
     }
 }
