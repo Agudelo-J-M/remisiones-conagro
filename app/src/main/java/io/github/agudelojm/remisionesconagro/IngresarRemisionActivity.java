@@ -8,6 +8,8 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ArrayAdapter;
+import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -31,7 +33,8 @@ import java.util.Map;
 
 public class IngresarRemisionActivity extends AppCompatActivity {
 
-    private EditText edtFincaID, edtProductoRef, edtCantidad;
+    private AutoCompleteTextView edtFincaID, edtProductoRef;
+    private EditText edtCantidad;
     private TextView tvwNombreFinca, tvwNombreProducto, tvwTitulo;
     private RadioGroup rgpTipoItem;
     private RadioButton rbtProducto, rbtMantenimiento;
@@ -102,40 +105,39 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         btnAnadirItem = findViewById(R.id.btn_Anadir_Item_Ingresar_Remision);
         btnFinalizarRemision = findViewById(R.id.btn_Finalizar_Remision_Ingresar_Remision);
         tlyTablaDatos = findViewById(R.id.tly_TablaDatos_Ingresar_Remision);
+
+        // Set up Autocomplete
+        ArrayAdapter<String> fincaAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_dropdown_item_1line, Methods.getListaFincas());
+        edtFincaID.setAdapter(fincaAdapter);
+
+        ArrayAdapter<String> productAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_dropdown_item_1line, Methods.getListaProductos());
+        edtProductoRef.setAdapter(productAdapter);
     }
 
     private void setupListeners() {
-        // Search Finca Name when user finishes inputting ID
+        // Search Finca Name when user selects an item or finishes inputting ID
+        edtFincaID.setOnItemClickListener((parent, view, position, id) -> {
+            String selected = (String) parent.getItemAtPosition(position);
+            buscarYMostrarFinca(selected);
+        });
+
         edtFincaID.setOnFocusChangeListener((v, hasFocus) -> {
             if (!hasFocus) {
-                String id = edtFincaID.getText().toString().trim();
-                if (!id.isEmpty()) {
-                    fincaActual = Methods.buscarCliente(id);
-                    if (fincaActual != null) {
-                        tvwNombreFinca.setText(fincaActual.getOrDefault("finca_nombre", "Finca encontrada"));
-                        tvwNombreFinca.setTextColor(getResources().getColor(R.color.blue));
-                    } else {
-                        tvwNombreFinca.setText(id + " no encontrado");
-                        tvwNombreFinca.setTextColor(Color.RED);
-                    }
-                }
+                buscarYMostrarFinca(edtFincaID.getText().toString().trim());
             }
         });
 
-        // Search Product Name when user finishes inputting Ref
+        // Search Product Name when user selects an item or finishes inputting Ref
+        edtProductoRef.setOnItemClickListener((parent, view, position, id) -> {
+            String selected = (String) parent.getItemAtPosition(position);
+            buscarYMostrarProducto(selected);
+        });
+
         edtProductoRef.setOnFocusChangeListener((v, hasFocus) -> {
             if (!hasFocus && rbtProducto.isChecked()) {
-                String ref = edtProductoRef.getText().toString().trim();
-                if (!ref.isEmpty()) {
-                    Map<String, String> prod = Methods.buscarProducto(ref);
-                    if (prod != null) {
-                        tvwNombreProducto.setText(prod.get("nombre"));
-                        tvwNombreProducto.setTextColor(getResources().getColor(R.color.blue));
-                    } else {
-                        tvwNombreProducto.setText(ref + " no encontrado");
-                        tvwNombreProducto.setTextColor(Color.RED);
-                    }
-                }
+                buscarYMostrarProducto(edtProductoRef.getText().toString().trim());
             }
         });
 
@@ -153,6 +155,34 @@ public class IngresarRemisionActivity extends AppCompatActivity {
 
         btnAnadirItem.setOnClickListener(v -> agregarItem());
         btnFinalizarRemision.setOnClickListener(v -> finalizarRemision());
+    }
+
+    private void buscarYMostrarFinca(String query) {
+        if (query.isEmpty()) return;
+        fincaActual = Methods.buscarCliente(query);
+        if (fincaActual != null) {
+            tvwNombreFinca.setText(fincaActual.getOrDefault("finca_nombre", "Finca encontrada"));
+            tvwNombreFinca.setTextColor(getResources().getColor(R.color.blue));
+            // Update text to just the ID to avoid messy submission
+            edtFincaID.setText(fincaActual.getOrDefault("finca_id", query), false);
+        } else {
+            tvwNombreFinca.setText(query + " no encontrado");
+            tvwNombreFinca.setTextColor(Color.RED);
+        }
+    }
+
+    private void buscarYMostrarProducto(String query) {
+        if (query.isEmpty()) return;
+        Map<String, String> prod = Methods.buscarProducto(query);
+        if (prod != null) {
+            tvwNombreProducto.setText(prod.get("nombre"));
+            tvwNombreProducto.setTextColor(getResources().getColor(R.color.blue));
+            // Update text to just the ID
+            edtProductoRef.setText(prod.get("id"), false);
+        } else {
+            tvwNombreProducto.setText(query + " no encontrado");
+            tvwNombreProducto.setTextColor(Color.RED);
+        }
     }
 
     private void loadMantenimientos() {
@@ -195,8 +225,21 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         }
 
         if (itemData != null) {
+            String id = itemData.get("id");
+            if (rbtProducto.isChecked()) {
+                HashMap<String, Integer> carInv = Methods.getCarInventory(this);
+                if (!carInv.containsKey(id)) {
+                    Methods.showAlert(this, "Error: El producto no se encuentra en el inventario del carro.").show();
+                    return;
+                }
+                Integer currentQty = carInv.get(id);
+                if ((currentQty != null ? currentQty : 0) < Integer.parseInt(cantidadStr)) {
+                    Methods.showAlert(this, "Advertencia: Cantidad en carro insuficiente (" + currentQty + ")").show();
+                }
+            }
+
             itemsAgregados.add(new ItemRemision(
-                    itemData.get("id"),
+                    id,
                     itemData.get("nombre"),
                     cantidadStr,
                     itemData.get("precio")
@@ -268,6 +311,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         Intent intent = new Intent(this, PedirFirmaActivity.class);
         intent.putExtra("flowType", "remision_tecnico");
         intent.putExtra("userData", userData);
+        intent.putExtra("consecutivo", consecutivo);
         signatureLauncher.launch(intent);
     }
 
@@ -275,6 +319,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         Intent intent = new Intent(this, PedirFirmaActivity.class);
         intent.putExtra("flowType", "remision_cliente");
         intent.putExtra("userData", userData);
+        intent.putExtra("consecutivo", consecutivo);
         signatureLauncher.launch(intent);
     }
 
@@ -289,8 +334,8 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             pdfItems.add(m);
         }
 
-        File fileT = new File(getFilesDir(), "firma_tecnico.png");
-        File fileC = new File(getFilesDir(), "firma_cliente.png");
+        File fileT = new File(getFilesDir(), "firma_tecnico_" + consecutivo + ".png");
+        File fileC = new File(getFilesDir(), "firma_cliente_" + consecutivo + ".png");
         
         Bitmap bTecnico = BitmapFactory.decodeFile(fileT.getAbsolutePath());
         Bitmap bCliente = BitmapFactory.decodeFile(fileC.getAbsolutePath());
@@ -302,13 +347,20 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         if (fileC.exists()) fileC.delete();
         
         if (pdfFile != null && pdfFile.exists()) {
-            enviarRemisionPorEmail(pdfFile);
+            // Deduct from inventories
+            Methods.updateWarehouseStock(this, pdfItems);
+            Methods.updateCarStock(this, pdfItems);
+
+            // Save remission metadata for future modification
+            Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
+
+            enviarRemisionPorEmail(pdfFile, fileT, fileC);
         } else {
             Methods.showAlert(this, "Error generando el PDF de remisión.").show();
         }
     }
 
-    private void enviarRemisionPorEmail(File pdfFile) {
+    private void enviarRemisionPorEmail(File pdfFile, File sigT, File sigC) {
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("application/pdf");
         emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
@@ -321,12 +373,17 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
         startActivity(Intent.createChooser(emailIntent, "Enviar Remisión..."));
+        
+        // Final cleanup of signature files after intent is started
+        if (sigT.exists()) sigT.delete();
+        if (sigC.exists()) sigC.delete();
+
         finish();
     }
 
-    private static class ItemRemision {
-        String id, nombre, cantidad, precio;
-        ItemRemision(String id, String nombre, String cantidad, String precio) {
+    public static class ItemRemision {
+        public String id, nombre, cantidad, precio;
+        public ItemRemision(String id, String nombre, String cantidad, String precio) {
             this.id = id;
             this.nombre = nombre;
             this.cantidad = cantidad;

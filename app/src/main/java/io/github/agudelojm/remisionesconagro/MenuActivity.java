@@ -67,7 +67,11 @@ public class MenuActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
-        findViewById(R.id.btn_ModificarRemision).setOnClickListener(v -> showNotImplemented());
+        findViewById(R.id.btn_ModificarRemision).setOnClickListener(v -> {
+            Intent intent = new Intent(this, ModificarRemisionActivity.class);
+            intent.putExtra("userData", userData);
+            startActivity(intent);
+        });
         findViewById(R.id.btn_Reporte).setOnClickListener(v -> showNotImplemented());
 
         findViewById(R.id.btn_InventarioCarro).setOnClickListener(v -> {

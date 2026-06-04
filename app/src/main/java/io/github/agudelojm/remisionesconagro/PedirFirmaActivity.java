@@ -33,6 +33,7 @@ public class PedirFirmaActivity extends AppCompatActivity {
     private SignaturePad mSignaturePad;
     private HashMap<String, String> userData;
     private String flowType;
+    private String consecutivo = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,6 +49,8 @@ public class PedirFirmaActivity extends AppCompatActivity {
             userData = (HashMap<String, String>) serializable;
         }
         flowType = intent.getStringExtra("flowType");
+        consecutivo = intent.getStringExtra("consecutivo");
+        if (consecutivo == null) consecutivo = "";
 
         TextView tvwTitulo = findViewById(R.id.tvw_Titulo_Pedir_Firma);
         if ("inventario".equals(flowType)) {
@@ -74,8 +77,8 @@ public class PedirFirmaActivity extends AppCompatActivity {
 
     private void procesarFirma() {
         String fileName = "firma.png";
-        if ("remision_tecnico".equals(flowType)) fileName = "firma_tecnico.png";
-        else if ("remision_cliente".equals(flowType)) fileName = "firma_cliente.png";
+        if ("remision_tecnico".equals(flowType)) fileName = "firma_tecnico_" + consecutivo + ".png";
+        else if ("remision_cliente".equals(flowType)) fileName = "firma_cliente_" + consecutivo + ".png";
 
         File signatureFile = new File(getFilesDir(), fileName);
         try (FileOutputStream out = new FileOutputStream(signatureFile)) {
@@ -114,9 +117,18 @@ public class PedirFirmaActivity extends AppCompatActivity {
         }
 
         // 2. Load workbook and insert image
-        XSSFWorkbook wb = Methods.getInventarioWb();
-        if (wb == null) {
-            wb = Methods.loadInventarioWb(this);
+        XSSFWorkbook wb = null;
+        File tempFile = new File(getFilesDir(), "Inventario_Temp.xlsx");
+        
+        try {
+            if (tempFile.exists()) {
+                wb = Methods.loadWorkbookFromFile(this, "Inventario_Temp.xlsx");
+            } else {
+                wb = Methods.getInventarioWb();
+                if (wb == null) wb = Methods.loadInventarioWb(this);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading workbook for signature", e);
         }
 
         if (wb != null && imageBytes != null) {
@@ -130,8 +142,12 @@ public class PedirFirmaActivity extends AppCompatActivity {
             }
         }
 
-        // 3. Save the modified XLSX (overwriting internal Inventario.xlsx)
+        // 3. Save the modified XLSX
+        // If it was a temp inventory, it now becomes the definitive one
         Methods.saveWorkbook(this, wb, "Inventario.xlsx");
+        
+        // Reload global reference if it's the main inventory
+        Methods.loadInventarioWb(this);
 
         // 4. Email process
         Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
@@ -156,10 +172,15 @@ public class PedirFirmaActivity extends AppCompatActivity {
 
         startActivity(Intent.createChooser(emailIntent, "Enviar Inventario..."));
 
-        // 5. Cleanup temporary signature but KEEP Inventario.xlsx
+        // 5. Cleanup
         if (signatureFile.exists()) signatureFile.delete();
-        // Methods.setInventarioWbToNull(); // Removed as per request to keep it for template
-        finish();
+        if (tempFile.exists()) tempFile.delete();
+
+        // Final Requirement: Clear Car Inventory when new Warehouse Inventory is accepted
+        Methods.saveCarInventory(this, new HashMap<>());
+
+        Methods.showAlert(this, "Inventario de Bodega Actualizado. El inventario del carro ha sido vaciado para asegurar la sincronización.")
+                .setOnDismissListener(dialog -> finish());
     }
 
     private void finalizarFlowGenerico(File signatureFile) {

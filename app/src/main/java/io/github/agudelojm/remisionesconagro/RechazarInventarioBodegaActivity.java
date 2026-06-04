@@ -59,7 +59,9 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Motivo de rechazo: " + motivo);
 
         ArrayList<Uri> uris = new ArrayList<>();
-        File file = new File(getFilesDir(), "Inventario.xlsx");
+        File file = new File(getFilesDir(), "Inventario_Temp.xlsx");
+        if (!file.exists()) file = new File(getFilesDir(), "Inventario.xlsx");
+        
         if (file.exists()) {
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", file);
             uris.add(uri);
@@ -68,8 +70,9 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
         emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-        // 2. State Reset (Not deleting the file anymore as requested)
-        // Methods.setInventarioWbToNull(); // Removed to keep it as template for InventarioCarro
+        // Cleanup temporary inventory on rejection
+        File tempFile = new File(getFilesDir(), "Inventario_Temp.xlsx");
+        if (tempFile.exists()) tempFile.delete();
 
         startActivity(Intent.createChooser(emailIntent, "Enviar Motivo de Rechazo..."));
         finish();

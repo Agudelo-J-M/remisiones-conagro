@@ -32,13 +32,13 @@ public class ActualizarDatos {
         
         try {
             if (fileName.endsWith(".csv")) {
-                return processCsvInventory(context, uri);
+                return processCsvInventory(context, uri, fileName);
             }
 
             try (FileInputStream fis = new FileInputStream(Objects.requireNonNull(context.getContentResolver().openFileDescriptor(uri, "r")).getFileDescriptor())) {
                 XSSFWorkbook wb = Methods.loadWorkbook(context, fis);
                 if (wb != null) {
-                    return processAndValidateWorkbook(context, wb);
+                    return processAndValidateWorkbook(context, wb, fileName);
                 }
             }
         } catch (Exception e) {
@@ -50,7 +50,11 @@ public class ActualizarDatos {
     /**
      * Converts an incoming CSV inventory file into the internal "Inventario.xlsx" format.
      */
-    private static String processCsvInventory(Context context, Uri uri) {
+    private static String processCsvInventory(Context context, Uri uri, String fileName) {
+        if (!fileName.toUpperCase().startsWith("INV")) {
+            Methods.showFatalError(context, "Error: El archivo de inventario debe empezar por 'INV'.");
+            return "Error Nombre";
+        }
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(context.getContentResolver().openInputStream(uri)))) {
             XSSFWorkbook wb = new XSSFWorkbook();
             Sheet sheet = wb.createSheet("Inventario");
@@ -67,8 +71,12 @@ public class ActualizarDatos {
                 }
             }
             
-            Methods.saveWorkbook(context, wb, "Inventario.xlsx");
-            return "Inventario (CSV)";
+            if (validateInventoryStructure(context, wb)) {
+                Methods.saveWorkbook(context, wb, "Inventario_Temp.xlsx");
+                return "Inventario (CSV)";
+            } else {
+                return "Error Formato CSV";
+            }
         } catch (Exception e) {
             Log.e(TAG, "Error converting CSV to XLSX", e);
             Methods.showFatalError(context, "Error procesando el archivo CSV de Inventario.");
@@ -79,7 +87,7 @@ public class ActualizarDatos {
     /**
      * Identifies the workbook type, validates its structure, and saves it if correct.
      */
-    private static String processAndValidateWorkbook(Context context, XSSFWorkbook wb) {
+    private static String processAndValidateWorkbook(Context context, XSSFWorkbook wb, String originalFileName) {
         // Identify if it's the main database by checking for the "Tecnicos" sheet
         if (wb.getSheet("Tecnicos") != null) {
             if (validateMainDatabaseStructure(context, wb)) {
@@ -87,15 +95,26 @@ public class ActualizarDatos {
                 return "Base de Datos";
             }
         } 
-        // Identify if it's an inventory file
-        else if (wb.getSheet("Inventario") != null || wb.getNumberOfSheets() > 0) {
-            Methods.saveWorkbook(context, wb, "Inventario.xlsx");
-            return "Inventario";
+        // Identify if it's an inventory file (Must start with INV and have correct headers)
+        else if (originalFileName.toUpperCase().startsWith("INV")) {
+            if (validateInventoryStructure(context, wb)) {
+                Methods.saveWorkbook(context, wb, "Inventario_Temp.xlsx");
+                return "Inventario";
+            }
         } 
         else {
-            Methods.showFatalError(context, "Error: El archivo no corresponde a un formato reconocido (Base de Datos o Inventario).");
+            Methods.showFatalError(context, "Error: El archivo no corresponde a un formato reconocido (Base de Datos o Inventario). El inventario debe empezar por 'INV'.");
         }
         return "Desconocido";
+    }
+
+    /**
+     * Validates that the inventory workbook contains the required columns.
+     */
+    private static boolean validateInventoryStructure(Context context, XSSFWorkbook wb) {
+        Sheet sheet = wb.getSheet("Inventario");
+        if (sheet == null) sheet = wb.getSheetAt(0);
+        return validateHeaders(context, sheet, Arrays.asList("cod_suc", "cod_bod", "ano", "referencia", "nombre", "saldo"));
     }
 
     /**

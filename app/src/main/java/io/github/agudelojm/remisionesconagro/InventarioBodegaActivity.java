@@ -86,7 +86,16 @@ public class InventarioBodegaActivity extends AppCompatActivity {
 
     private void cargarInventario() {
         try {
-            // Priority to the globally loaded template for consistency
+            // Priority 1: Temporary Inventory (New incoming file)
+            inventarioWb = Methods.loadWorkbookFromFile(this, "Inventario_Temp.xlsx");
+            
+            if (inventarioWb != null) {
+                poblarTabla(inventarioWb);
+                Methods.showAlert(this, "Mostrando Nuevo Inventario Pendiente de Aceptación.").show();
+                return;
+            }
+
+            // Priority 2: Definitive Inventory
             inventarioWb = Methods.getInventarioWb();
             if (inventarioWb == null) {
                 inventarioWb = Methods.loadInventarioWb(this);

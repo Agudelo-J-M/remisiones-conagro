@@ -12,6 +12,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RemisionesCoonagro">
         <activity
+            android:name=".EditarRemisionActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ModificarRemisionActivity"
+            android:exported="false" />
+        <activity
             android:name=".IngresarRemisionActivity"
             android:exported="false" />
         <activity

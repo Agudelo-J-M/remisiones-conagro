@@ -1,9 +1,10 @@
 package io.github.agudelojm.remisionesconagro;
 
-import android.app.AlertDialog;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.View;
+import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -26,7 +27,8 @@ import java.util.Map;
  */
 public class InventarioCarroActivity extends AppCompatActivity {
 
-    private EditText edtInput, edtCantidad;
+    private AutoCompleteTextView edtInput;
+    private EditText edtCantidad;
     private TableLayout tlyTabla;
     private HashMap<String, Integer> inventarioData = new HashMap<>();
 
@@ -48,6 +50,10 @@ public class InventarioCarroActivity extends AppCompatActivity {
         initViews();
         setupListeners();
 
+        // Load persisted inventory
+        inventarioData = Methods.getCarInventory(this);
+        actualizarTablaUI();
+
         // Initial warning if template is missing
         if (Methods.getInventarioWb() == null) {
             Methods.showAlert(this, "Advertencia: No se detectó el archivo de Inventario de Bodega. Las validaciones de stock estarán deshabilitadas.").show();
@@ -58,6 +64,11 @@ public class InventarioCarroActivity extends AppCompatActivity {
         edtInput = findViewById(R.id.edt_IDProducto_Inventario_Carro);
         edtCantidad = findViewById(R.id.edt_Cantidad_Inventario_Carro);
         tlyTabla = findViewById(R.id.tly_TablaDatos_Inventario_Carro);
+
+        // Set up Autocomplete
+        ArrayAdapter<String> productAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_dropdown_item_1line, Methods.getListaProductos());
+        edtInput.setAdapter(productAdapter);
     }
 
     private void setupListeners() {
@@ -66,22 +77,22 @@ public class InventarioCarroActivity extends AppCompatActivity {
     }
 
     private void procesarEntrada() {
-        String inputStr = edtInput.getText().toString().trim();
+        String query = edtInput.getText().toString().trim();
         String cantStr = edtCantidad.getText().toString().trim();
 
-        if (inputStr.isEmpty() || cantStr.isEmpty()) {
+        if (query.isEmpty() || cantStr.isEmpty()) {
             Methods.showAlert(this, "Por favor complete todos los campos").show();
             return;
         }
 
-        // Support for search by Name or Reference
-        Map<String, String> prodDetails = Methods.getProductoDetails(this, inputStr);
+        // Support for search by Name or Reference (handles "Ref - Name" from autocomplete)
+        Map<String, String> prodDetails = Methods.buscarProducto(query);
         if (prodDetails == null) {
-            Methods.showAlert(this, "Error: Producto '" + inputStr + "' no encontrado en el maestro de productos.").show();
+            Methods.showAlert(this, "Error: Producto '" + query + "' no encontrado.").show();
             return;
         }
 
-        String ref = prodDetails.get("referencia");
+        String ref = prodDetails.get("id");
         String name = prodDetails.get("nombre");
 
         int nuevaCantidad;
@@ -101,7 +112,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
             }
 
             if (saldo == -1.0) {
-                Methods.showAlert(this, "Advertencia: El producto '" + inputStr + "' no se encuentra en el inventario de bodega.").show();
+                Methods.showAlert(this, "Advertencia: El producto '" + query + "' no se encuentra en el inventario de bodega.").show();
             } else {
                 int totalEnCarro = inventarioData.getOrDefault(ref, 0) + nuevaCantidad;
                 if (totalEnCarro > saldo) {
@@ -112,6 +123,9 @@ public class InventarioCarroActivity extends AppCompatActivity {
 
         // Add to map using official Reference ID
         inventarioData.put(ref, inventarioData.getOrDefault(ref, 0) + nuevaCantidad);
+
+        // Persist changes
+        Methods.saveCarInventory(this, inventarioData);
 
         actualizarTablaUI();
         limpiarInputs();
@@ -155,6 +169,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
         btnBorrar.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 0.7f));
         btnBorrar.setOnClickListener(v -> {
             inventarioData.remove(idAEliminar);
+            Methods.saveCarInventory(this, inventarioData);
             actualizarTablaUI();
         });
         return btnBorrar;
@@ -162,6 +177,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
 
     private void vaciarInventarioCompleto() {
         inventarioData.clear();
+        Methods.saveCarInventory(this, inventarioData);
         actualizarTablaUI();
         Methods.showAlert(this, "Inventario vaciado").show();
     }
