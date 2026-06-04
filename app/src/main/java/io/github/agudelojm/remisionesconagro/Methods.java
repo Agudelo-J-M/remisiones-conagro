@@ -25,6 +25,7 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -38,9 +39,9 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
-import org.json.JSONObject;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -175,7 +176,7 @@ public class Methods {
     /**
      * Saves a workbook to internal storage.
      */
-    public static void saveWorkbook(Context context, XSSFWorkbook wb, String fileName) {
+    public static synchronized void saveWorkbook(Context context, XSSFWorkbook wb, String fileName) {
         if (wb == null) return;
         try {
             File file = new File(context.getFilesDir(), fileName);
@@ -347,18 +348,33 @@ public class Methods {
         }
     }
 
-    public static XSSFWorkbook getInventarioWb() { return inventarioWb; }
-    
-    public static void setInventarioWbToNull() { inventarioWb = null; }
-
-    public static DataFormatter getDataFormatter() { return dataFormatter; }
+    /**
+     * Returns the globally loaded Inventory Workbook.
+     */
+    public static XSSFWorkbook getInventarioWb() {
+        return inventarioWb;
+    }
 
     /**
-     * Resolves the filename from a given Uri using ContentResolver.
+     * Sets the global Inventory Workbook reference to null.
+     */
+    public static void setInventarioWbToNull() {
+        inventarioWb = null;
+    }
+
+    /**
+     * Returns the global DataFormatter for consistent cell reading.
+     */
+    public static DataFormatter getDataFormatter() {
+        return dataFormatter;
+    }
+
+    /**
+     * Resolves the real filename of a Uri.
      */
     public static String getFileName(Context context, Uri uri) {
         String result = null;
-        if ("content".equals(uri.getScheme())) {
+        if (uri.getScheme().equals("content")) {
             try (Cursor cursor = context.getContentResolver().query(uri, null, null, null, null)) {
                 if (cursor != null && cursor.moveToFirst()) {
                     int idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
@@ -368,10 +384,8 @@ public class Methods {
         }
         if (result == null) {
             result = uri.getPath();
-            if (result != null) {
-                int cut = result.lastIndexOf('/');
-                if (cut != -1) result = result.substring(cut + 1);
-            }
+            int cut = result.lastIndexOf('/');
+            if (cut != -1) result = result.substring(cut + 1);
         }
         return result != null ? result : "Desconocido";
     }
@@ -386,14 +400,9 @@ public class Methods {
             Sheet sheet = inventarioWb.getSheet("Inventario");
             if (sheet == null) sheet = inventarioWb.getSheetAt(0);
             
-            int idxRef = -1, idxNombre = -1, idxSaldo = -1;
-            Row header = sheet.getRow(0);
-            for (Cell cell : header) {
-                String val = cell.toString().toLowerCase().trim();
-                if (val.contains("referencia")) idxRef = cell.getColumnIndex();
-                else if (val.contains("nombre")) idxNombre = cell.getColumnIndex();
-                else if (val.contains("saldo")) idxSaldo = cell.getColumnIndex();
-            }
+            int idxRef = getColumnIndex(sheet, "referencia");
+            int idxNombre = getColumnIndex(sheet, "nombre");
+            int idxSaldo = getColumnIndex(sheet, "saldo");
 
             if (idxRef == -1 || idxNombre == -1 || idxSaldo == -1) return -1.0;
 
@@ -418,28 +427,35 @@ public class Methods {
         return -1.0;
     }
 
-    public static boolean validateEmptyStringArray(String[] fields) {
-        for (String s : fields) if (s == null || s.isEmpty()) return true;
+    /**
+     * Checks if any string in the array is null or empty.
+     */
+    public static boolean validateEmptyStringArray(String[] array) {
+        for (String s : array) {
+            if (s == null || s.isEmpty()) return true;
+        }
         return false;
     }
 
-    // --- Logic Layer for Ingresar Remisión ---
-
+    /**
+     * Returns a list of maintenance service descriptions.
+     */
     public static List<String> getListaMantenimientos() {
-        List<String> mantenimientos = new ArrayList<>();
-        if (tarifasMantenimientoSheet != null) {
-            int idxDesc = getColumnIndex(tarifasMantenimientoSheet, "descripcion");
-            if (idxDesc != -1) {
-                for (Row row : tarifasMantenimientoSheet) {
-                    if (row.getRowNum() == 0) continue;
-                    String desc = dataFormatter.formatCellValue(row.getCell(idxDesc));
-                    if (desc != null && !desc.trim().isEmpty()) mantenimientos.add(desc);
-                }
-            }
+        List<String> list = new ArrayList<>();
+        if (tarifasMantenimientoSheet == null) return list;
+        int idxDesc = getColumnIndex(tarifasMantenimientoSheet, "descripcion");
+        if (idxDesc == -1) return list;
+
+        for (Row row : tarifasMantenimientoSheet) {
+            if (row.getRowNum() == 0) continue;
+            list.add(dataFormatter.formatCellValue(row.getCell(idxDesc)));
         }
-        return mantenimientos;
+        return list;
     }
 
+    /**
+     * Searches for a product by its query string (ID or Name).
+     */
     public static Map<String, String> buscarProducto(String query) {
         if (productosSheet == null) return null;
         int idxRef = getColumnIndex(productosSheet, "referencia");
@@ -463,26 +479,32 @@ public class Methods {
         return null;
     }
 
-    public static Map<String, String> buscarMantenimiento(String descripcion) {
+    /**
+     * Searches for a maintenance service by description.
+     */
+    public static Map<String, String> buscarMantenimiento(String desc) {
         if (tarifasMantenimientoSheet == null) return null;
-        int idxDesc = getColumnIndex(tarifasMantenimientoSheet, "descripcion");
         int idxRef = getColumnIndex(tarifasMantenimientoSheet, "referencia");
+        int idxDesc = getColumnIndex(tarifasMantenimientoSheet, "descripcion");
         int idxPrecio = getColumnIndex(tarifasMantenimientoSheet, "precio_base");
-        if (idxDesc == -1 || idxRef == -1) return null;
+        if (idxRef == -1 || idxDesc == -1) return null;
 
         for (Row row : tarifasMantenimientoSheet) {
             if (row.getRowNum() == 0) continue;
-            if (descripcion.equalsIgnoreCase(dataFormatter.formatCellValue(row.getCell(idxDesc)))) {
+            if (desc.equalsIgnoreCase(dataFormatter.formatCellValue(row.getCell(idxDesc)))) {
                 Map<String, String> map = new HashMap<>();
-                map.put("id", dataFormatter.formatCellValue(row.getCell(idxRef)));
-                map.put("nombre", descripcion);
-                map.put("precio", idxPrecio != -1 ? dataFormatter.formatCellValue(row.getCell(idxPrecio)) : "0");
+                map.put("referencia", dataFormatter.formatCellValue(row.getCell(idxRef)));
+                map.put("descripcion", desc);
+                map.put("precio_base", dataFormatter.formatCellValue(row.getCell(idxPrecio)));
                 return map;
             }
         }
         return null;
     }
 
+    /**
+     * Returns a list of all Finca IDs formatted as "ID - Name".
+     */
     public static List<String> getListaFincas() {
         List<String> lista = new ArrayList<>();
         if (clientesSheet == null) return lista;
@@ -501,6 +523,9 @@ public class Methods {
         return lista;
     }
 
+    /**
+     * Returns a list of all Product References formatted as "Ref - Name".
+     */
     public static List<String> getListaProductos() {
         List<String> lista = new ArrayList<>();
         if (productosSheet == null) return lista;
@@ -519,6 +544,9 @@ public class Methods {
         return lista;
     }
 
+    /**
+     * Searches for a Finca/Client by its query string (ID or Name).
+     */
     public static Map<String, String> buscarCliente(String query) {
         if (clientesSheet == null) return null;
         int idxId = getColumnIndex(clientesSheet, "finca_id");
@@ -544,6 +572,9 @@ public class Methods {
         return null;
     }
 
+    /**
+     * Generates a unique consecutive ID for a remission based on the technician's number and timestamp.
+     */
     public static String generarConsecutivo(Context context, String tecnicoNumero) {
         if (tecnicoNumero == null || tecnicoNumero.isEmpty()) {
             showFatalError(context, "Error: El número del técnico no está disponible para generar consecutivo.");
@@ -585,7 +616,10 @@ public class Methods {
         return inventory;
     }
 
-    public static void saveCarInventory(Context context, HashMap<String, Integer> inventory) {
+    /**
+     * Saves the car inventory to a JSON file in internal storage.
+     */
+    public static synchronized void saveCarInventory(Context context, HashMap<String, Integer> inventory) {
         try {
             JSONObject json = new JSONObject();
             for (Map.Entry<String, Integer> entry : inventory.entrySet()) {
@@ -600,7 +634,10 @@ public class Methods {
         }
     }
 
-    public static void saveRemisionData(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, boolean restored) {
+    /**
+     * Saves remission metadata and items to a JSON file.
+     */
+    public static synchronized void saveRemisionData(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, boolean restored) {
         try {
             JSONObject json = new JSONObject();
             json.put("consecutivo", consecutivo);
@@ -628,6 +665,9 @@ public class Methods {
         }
     }
 
+    /**
+     * Retrieves remission data from JSON.
+     */
     public static JSONObject loadRemisionData(Context context, String consecutivo) {
         File file = new File(context.getFilesDir(), "Remision_" + consecutivo + ".json");
         if (!file.exists()) return null;
@@ -641,6 +681,9 @@ public class Methods {
         }
     }
 
+    /**
+     * Returns a list of metadata for all saved remissions.
+     */
     public static List<Map<String, String>> getListaRemisiones(Context context) {
         List<Map<String, String>> lista = new ArrayList<>();
         File dir = context.getFilesDir();
@@ -667,9 +710,32 @@ public class Methods {
     }
 
     /**
+     * Loads and returns the full JSONObject list for all saved remissions.
+     */
+    public static List<JSONObject> getAllRemisionesData(Context context) {
+        List<JSONObject> lista = new ArrayList<>();
+        File dir = context.getFilesDir();
+        File[] files = dir.listFiles((d, name) -> name.startsWith("Remision_") && name.endsWith(".json"));
+        if (files == null) return lista;
+
+        for (File file : files) {
+            try {
+                String consecutivo = file.getName().replace("Remision_", "").replace(".json", "");
+                JSONObject json = loadRemisionData(context, consecutivo);
+                if (json != null) {
+                    lista.add(json);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error loading remission for report", e);
+            }
+        }
+        return lista;
+    }
+
+    /**
      * Adds items back to stock (used during modification).
      */
-    public static void restaurarStock(Context context, List<Map<String, String>> items) {
+    public static synchronized void restaurarStock(Context context, List<Map<String, String>> items) {
         // 1. Restore to Car Inventory
         HashMap<String, Integer> carInv = getCarInventory(context);
         for (Map<String, String> item : items) {
@@ -735,7 +801,7 @@ public class Methods {
     /**
      * Deducts quantities from the warehouse inventory (Inventario.xlsx).
      */
-    public static void updateWarehouseStock(Context context, List<Map<String, String>> items) {
+    public static synchronized void updateWarehouseStock(Context context, List<Map<String, String>> items) {
         if (inventarioWb == null) loadInventarioWb(context);
         if (inventarioWb == null) return;
         try {
@@ -786,7 +852,7 @@ public class Methods {
     /**
      * Deducts quantities from the car inventory (InventarioCarro.json).
      */
-    public static void updateCarStock(Context context, List<Map<String, String>> items) {
+    public static synchronized void updateCarStock(Context context, List<Map<String, String>> items) {
         HashMap<String, Integer> carInv = getCarInventory(context);
         boolean modified = false;
         for (Map<String, String> item : items) {
@@ -843,120 +909,120 @@ public class Methods {
         }
     }
 
-    public static File generarPDFRemision(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, Bitmap firmaTecnico, Bitmap firmaCliente) {
+    public static synchronized File generarPDFRemision(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, Bitmap firmaTecnico, Bitmap firmaCliente) {
         PdfDocument document = new PdfDocument();
-        PdfDocument.PageInfo pageInfo = new PdfDocument.PageInfo.Builder(595, 842, 1).create(); // A4
-        PdfDocument.Page page = document.startPage(pageInfo);
-        Canvas canvas = page.getCanvas();
+        int itemsPerPage = 10;
+        int totalItems = items.size();
+        int totalPages = (int) Math.ceil((double) totalItems / itemsPerPage);
+        if (totalPages == 0) totalPages = 1;
+
         Paint paint = new Paint();
         Paint titlePaint = new Paint();
         titlePaint.setTextSize(18f);
         titlePaint.setFakeBoldText(true);
-        
-        float x = 50, y = 50;
-        
-        // Header
-        canvas.drawText("CONAGRO S.A.", x, y, titlePaint);
-        y += 20;
-        paint.setTextSize(9f);
-        canvas.drawText("EQUIPOS DE ORDEÑO - INEMINACIÓN - ACCESORIOS", x, y, paint);
-        y += 15;
-        canvas.drawText("NIT. 890.922.928 - 5. Direccion: Cra. 43A No.27ASur - 86 Local 301 - 4. Centro empresarial la Casona. PBX: 557 55 28 cel: 311 876 15 39.", x, y, paint);
-        
-        y += 20;
-        canvas.drawText("PUNTO DE VENTA SAN PEDRO", x, y, paint);
-        y += 12;
-        canvas.drawText("Calle 45E No. 51AA - 72 Tel: 888 7708 Cel: 310 469 1338", x, y, paint);
-        y += 15;
-        canvas.drawText("PUNTO DE VENTA ENTRERRIOS", x, y, paint);
-        y += 12;
-        canvas.drawText("Cra. 12 No. 13-73 Tel: 867 0014 Cel: 321 759 4689", x, y, paint);
-        y += 15;
-        canvas.drawText("PUNTO DE VENTA SANTA ROSA DE OSOS", x, y, paint);
-        y += 12;
-        canvas.drawText("Av. 38 No. 28-100 Interior 233 Tel 8607211 Cel: 310 483 7545", x, y, paint);
-        
-        y += 30;
-        String dateStr = "";
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            dateStr = java.time.LocalDate.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
-        }
-        canvas.drawText("FECHA: " + dateStr, x, y, paint);
-        canvas.drawText("REMISIÓN: " + consecutivo, 400, y, titlePaint);
-        
-        y += 30;
-        canvas.drawText("ID FINCA: " + fincaData.getOrDefault("finca_id", ""), x, y, paint);
-        canvas.drawText("FINCA: " + fincaData.getOrDefault("direccion", ""), 200, y, paint);
-        y += 15;
-        canvas.drawText("CIUDAD: " + fincaData.getOrDefault("ciu", ""), x, y, paint);
-        canvas.drawText("DIRECCIÓN: " + fincaData.getOrDefault("direccion", ""), 200, y, paint);
-        y += 15;
-        canvas.drawText("PERSONA: " + fincaData.getOrDefault("persona_nombre", ""), x, y, paint);
-        canvas.drawText("DOC: " + fincaData.getOrDefault("persona_doc", ""), 200, y, paint);
-        canvas.drawText("TEL: " + fincaData.getOrDefault("persona_telefono", ""), 350, y, paint);
-        
-        y += 30;
-        // Table Header
-        paint.setFakeBoldText(true);
-        canvas.drawText("REF", x, y, paint);
-        canvas.drawText("CONCEPTO", x + 60, y, paint);
-        canvas.drawText("CANT", x + 300, y, paint);
-        canvas.drawText("UNITARIO", x + 360, y, paint);
-        canvas.drawText("TOTAL", x + 440, y, paint);
-        paint.setFakeBoldText(false);
-        y += 5;
-        canvas.drawLine(x, y, 550, y, paint);
-        y += 15;
-        
-        double granTotal = 0;
-        for (Map<String, String> item : items) {
-            canvas.drawText(item.getOrDefault("id", ""), x, y, paint);
-            canvas.drawText(item.getOrDefault("nombre", ""), x + 60, y, paint);
-            canvas.drawText(item.getOrDefault("cantidad", ""), x + 300, y, paint);
-            
-            double unit = Double.parseDouble(item.getOrDefault("precio", "0").replace(",", ""));
-            int cant = Integer.parseInt(item.getOrDefault("cantidad", "1"));
-            double total = unit * cant;
-            granTotal += total;
-            
-            canvas.drawText(String.format("%,.2f", unit), x + 360, y, paint);
-            canvas.drawText(String.format("%,.2f", total), x + 440, y, paint);
+
+        for (int p = 0; p < totalPages; p++) {
+            PdfDocument.PageInfo pageInfo = new PdfDocument.PageInfo.Builder(595, 842, p + 1).create(); // A4
+            PdfDocument.Page page = document.startPage(pageInfo);
+            Canvas canvas = page.getCanvas();
+            float x = 50, y = 50;
+
+            // Header (on every page)
+            canvas.drawText("CONAGRO S.A.", x, y, titlePaint);
+            y += 20;
+            paint.setTextSize(9f);
+            canvas.drawText("EQUIPOS DE ORDEÑO - INEMINACIÓN - ACCESORIOS", x, y, paint);
             y += 15;
+            canvas.drawText("NIT. 890.922.928 - 5. Direccion: Cra. 43A No.27ASur - 86 Local 301 - 4. Centro empresarial la Casona.", x, y, paint);
+            y += 12;
+            canvas.drawText("PBX: 557 55 28 cel: 311 876 15 39.", x, y, paint);
+
+            y += 20;
+            canvas.drawText("FECHA: " + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")), x, y, paint);
+            canvas.drawText("REMISIÓN: " + consecutivo, 400, y, titlePaint);
+            canvas.drawText("PÁGINA " + (p + 1) + " DE " + totalPages, 400, y + 20, paint);
+
+            y += 30;
+            canvas.drawText("ID FINCA: " + fincaData.getOrDefault("finca_id", ""), x, y, paint);
+            canvas.drawText("FINCA: " + fincaData.getOrDefault("direccion", ""), 200, y, paint);
+            y += 15;
+            canvas.drawText("PERSONA: " + fincaData.getOrDefault("persona_nombre", ""), x, y, paint);
+            canvas.drawText("TEL: " + fincaData.getOrDefault("persona_telefono", ""), 350, y, paint);
+
+            y += 30;
+            // Table Header
+            paint.setFakeBoldText(true);
+            canvas.drawText("REF", x, y, paint);
+            canvas.drawText("CONCEPTO", x + 60, y, paint);
+            canvas.drawText("CANT", x + 300, y, paint);
+            canvas.drawText("UNITARIO", x + 360, y, paint);
+            canvas.drawText("TOTAL", x + 440, y, paint);
+            paint.setFakeBoldText(false);
+            y += 5;
+            canvas.drawLine(x, y, 550, y, paint);
+            y += 15;
+
+            int startIdx = p * itemsPerPage;
+            int endIdx = Math.min(startIdx + itemsPerPage, totalItems);
+
+            for (int i = startIdx; i < endIdx; i++) {
+                Map<String, String> item = items.get(i);
+                canvas.drawText(item.getOrDefault("id", ""), x, y, paint);
+                canvas.drawText(item.getOrDefault("nombre", ""), x + 60, y, paint);
+                canvas.drawText(item.getOrDefault("cantidad", ""), x + 300, y, paint);
+
+                double unit = Double.parseDouble(item.getOrDefault("precio", "0").replace(",", ""));
+                int cant = Integer.parseInt(item.getOrDefault("cantidad", "1"));
+                double total = unit * cant;
+
+                canvas.drawText(String.format(Locale.getDefault(), "%,.2f", unit), x + 360, y, paint);
+                canvas.drawText(String.format(Locale.getDefault(), "%,.2f", total), x + 440, y, paint);
+                y += 20;
+            }
+
+            // Only on the LAST page: Totals and Signatures
+            if (p == totalPages - 1) {
+                double granTotal = 0;
+                for (Map<String, String> item : items) {
+                    double unit = Double.parseDouble(item.getOrDefault("precio", "0").replace(",", ""));
+                    int cant = Integer.parseInt(item.getOrDefault("cantidad", "1"));
+                    granTotal += (unit * cant);
+                }
+
+                y += 10;
+                canvas.drawLine(x, y, 550, y, paint);
+                y += 15;
+                paint.setFakeBoldText(true);
+                canvas.drawText("TOTAL: ", x + 360, y, paint);
+                canvas.drawText(String.format(Locale.getDefault(), "%,.2f", granTotal), x + 440, y, paint);
+                paint.setFakeBoldText(false);
+
+                y += 40;
+                canvas.drawText("TECNICO: " + tecnicoData.getOrDefault("nombre", "") + " " + tecnicoData.getOrDefault("apellidos", ""), x, y, paint);
+
+                y += 30;
+                paint.setStyle(Paint.Style.STROKE);
+                canvas.drawRect(x, y, x + 200, y + 80, paint);
+                canvas.drawRect(350, y, 550, y + 80, paint);
+                paint.setStyle(Paint.Style.FILL);
+
+                if (firmaTecnico != null) {
+                    Bitmap scaledFirmaT = Bitmap.createScaledBitmap(firmaTecnico, 180, 60, false);
+                    canvas.drawBitmap(scaledFirmaT, x + 10, y + 10, paint);
+                }
+                if (firmaCliente != null) {
+                    Bitmap scaledFirmaC = Bitmap.createScaledBitmap(firmaCliente, 180, 60, false);
+                    canvas.drawBitmap(scaledFirmaC, 360, y + 10, paint);
+                }
+
+                y += 95;
+                canvas.drawText("FIRMA TECNICO", x, y, paint);
+                canvas.drawText("FIRMA CLIENTE", 350, y, paint);
+            }
+
+            document.finishPage(page);
         }
-        
-        y += 5;
-        canvas.drawLine(x, y, 550, y, paint);
-        y += 15;
-        paint.setFakeBoldText(true);
-        canvas.drawText("TOTAL: ", x + 360, y, paint);
-        canvas.drawText(String.format("%,.2f", granTotal), x + 440, y, paint);
-        paint.setFakeBoldText(false);
-        
-        y += 40;
-        canvas.drawText("TECNICO: " + tecnicoData.getOrDefault("nombre", "") + " " + tecnicoData.getOrDefault("apellidos", ""), x, y, paint);
-        
-        y += 30;
-        // Draw boxes and titles for signatures
-        paint.setStyle(Paint.Style.STROKE);
-        canvas.drawRect(x, y, x + 200, y + 80, paint);
-        canvas.drawRect(350, y, 550, y + 80, paint);
-        paint.setStyle(Paint.Style.FILL);
-        
-        if (firmaTecnico != null) {
-            Bitmap scaledFirmaT = Bitmap.createScaledBitmap(firmaTecnico, 180, 60, false);
-            canvas.drawBitmap(scaledFirmaT, x + 10, y + 10, paint);
-        }
-        if (firmaCliente != null) {
-            Bitmap scaledFirmaC = Bitmap.createScaledBitmap(firmaCliente, 180, 60, false);
-            canvas.drawBitmap(scaledFirmaC, 360, y + 10, paint);
-        }
-        
-        y += 95;
-        canvas.drawText("FIRMA TECNICO", x, y, paint);
-        canvas.drawText("FIRMA CLIENTE", 350, y, paint);
-        
-        document.finishPage(page);
-        
+
         File file = new File(context.getFilesDir(), "Remision_" + consecutivo + ".pdf");
         try {
             document.writeTo(new FileOutputStream(file));

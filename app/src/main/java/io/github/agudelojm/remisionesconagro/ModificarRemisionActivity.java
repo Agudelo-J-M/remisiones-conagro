@@ -51,6 +51,14 @@ public class ModificarRemisionActivity extends AppCompatActivity {
 
     private void cargarRemisiones() {
         List<Map<String, String>> remisiones = Methods.getListaRemisiones(this);
+        
+        // Sort by date descending (most recent first)
+        java.util.Collections.sort(remisiones, (a, b) -> {
+            long dateA = Long.parseLong(a.getOrDefault("fecha", "0"));
+            long dateB = Long.parseLong(b.getOrDefault("fecha", "0"));
+            return Long.compare(dateB, dateA);
+        });
+
         SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault());
         
         for (Map<String, String> rem : remisiones) {
