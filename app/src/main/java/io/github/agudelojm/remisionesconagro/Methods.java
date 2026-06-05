@@ -105,12 +105,16 @@ public class Methods {
                     Log.w(TAG, "Inventario.xlsx could not be loaded on startup: " + e.getMessage());
                 }
 
-                alertDialog.dismiss();
-                alertDialog = showAlert(context, "Éxito leyendo Exceles");
-                if (inventarioWb == null) {
-                    alertDialog.setMessage("Éxito leyendo Base de Datos. Nota: No se encontró 'Inventario.xlsx', las validaciones de stock estarán deshabilitadas.");
+                if (alertDialog != null) alertDialog.dismiss();
+                
+                // Only show final success if we aren't in a silent refresh
+                if (!(context instanceof MainActivity)) {
+                    alertDialog = showAlert(context, "Éxito leyendo Exceles");
+                    if (inventarioWb == null) {
+                        alertDialog.setMessage("Éxito leyendo Base de Datos. Nota: No se encontró 'Inventario.xlsx', las validaciones de stock estarán deshabilitadas.");
+                    }
+                    alertDialog.show();
                 }
-                alertDialog.show();
                 
                 // Perform cleanup of old referrals
                 cleanOldRemisiones(context);
@@ -127,10 +131,12 @@ public class Methods {
 
     /**
      * Deletes referral PDFs and JSON data older than 14 days.
+     * Does NOT delete the temporary inventory here as it causes loading failures.
      */
-    public static void cleanOldRemisiones(Context context) {
+    public static synchronized void cleanOldRemisiones(Context context) {
         File dir = context.getFilesDir();
-        File[] files = dir.listFiles((d, name) -> name.startsWith("Remision_") && (name.endsWith(".pdf") || name.endsWith(".json")));
+        
+        File[] files = dir.listFiles((d, name) -> name != null && name.startsWith("Remision_") && (name.endsWith(".pdf") || name.endsWith(".json")));
         if (files == null) return;
 
         long thresholdMillis = 14L * 24 * 60 * 60 * 1000;
@@ -353,6 +359,41 @@ public class Methods {
      */
     public static XSSFWorkbook getInventarioWb() {
         return inventarioWb;
+    }
+
+    public static synchronized String getLastInventoryFileName(Context context) {
+        try {
+            File file = new File(context.getFilesDir(), "app_config.json");
+            if (!file.exists()) return "Inventario.xlsx";
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] data = new byte[(int) file.length()];
+                fis.read(data);
+                JSONObject json = new JSONObject(new String(data, "UTF-8"));
+                return json.optString("lastInventoryName", "Inventario.xlsx");
+            }
+        } catch (Exception e) {
+            return "Inventario.xlsx";
+        }
+    }
+
+    public static synchronized void setLastInventoryFileName(Context context, String name) {
+        try {
+            JSONObject json = new JSONObject();
+            File file = new File(context.getFilesDir(), "app_config.json");
+            if (file.exists()) {
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    byte[] data = new byte[(int) file.length()];
+                    fis.read(data);
+                    json = new JSONObject(new String(data, "UTF-8"));
+                }
+            }
+            json.put("lastInventoryName", name);
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(json.toString().getBytes("UTF-8"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving config", e);
+        }
     }
 
     /**
@@ -634,9 +675,6 @@ public class Methods {
         }
     }
 
-    /**
-     * Saves remission metadata and items to a JSON file.
-     */
     public static synchronized void saveRemisionData(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, boolean restored) {
         try {
             JSONObject json = new JSONObject();
@@ -644,17 +682,23 @@ public class Methods {
             json.put("fecha", System.currentTimeMillis());
             json.put("restored", restored);
             
-            JSONObject fincaJson = new JSONObject(fincaData);
-            json.put("fincaData", fincaJson);
+            if (fincaData != null) {
+                JSONObject fincaJson = new JSONObject(fincaData);
+                json.put("fincaData", fincaJson);
+            }
             
             org.json.JSONArray itemsArray = new org.json.JSONArray();
-            for (Map<String, String> item : items) {
-                itemsArray.put(new JSONObject(item));
+            if (items != null) {
+                for (Map<String, String> item : items) {
+                    itemsArray.put(new JSONObject(item));
+                }
             }
             json.put("items", itemsArray);
             
-            JSONObject tecnicoJson = new JSONObject(tecnicoData);
-            json.put("tecnicoData", tecnicoJson);
+            if (tecnicoData != null) {
+                JSONObject tecnicoJson = new JSONObject(tecnicoData);
+                json.put("tecnicoData", tecnicoJson);
+            }
             
             File file = new File(context.getFilesDir(), "Remision_" + consecutivo + ".json");
             try (FileOutputStream fos = new FileOutputStream(file)) {
@@ -681,13 +725,10 @@ public class Methods {
         }
     }
 
-    /**
-     * Returns a list of metadata for all saved remissions.
-     */
     public static List<Map<String, String>> getListaRemisiones(Context context) {
         List<Map<String, String>> lista = new ArrayList<>();
         File dir = context.getFilesDir();
-        File[] files = dir.listFiles((d, name) -> name.startsWith("Remision_") && name.endsWith(".json"));
+        File[] files = dir.listFiles((d, name) -> name != null && name.startsWith("Remision_") && name.endsWith(".json"));
         if (files == null) return lista;
 
         for (File file : files) {
@@ -709,13 +750,10 @@ public class Methods {
         return lista;
     }
 
-    /**
-     * Loads and returns the full JSONObject list for all saved remissions.
-     */
     public static List<JSONObject> getAllRemisionesData(Context context) {
         List<JSONObject> lista = new ArrayList<>();
         File dir = context.getFilesDir();
-        File[] files = dir.listFiles((d, name) -> name.startsWith("Remision_") && name.endsWith(".json"));
+        File[] files = dir.listFiles((d, name) -> name != null && name.startsWith("Remision_") && name.endsWith(".json"));
         if (files == null) return lista;
 
         for (File file : files) {
@@ -902,8 +940,10 @@ public class Methods {
             ClientAnchor anchor = helper.createClientAnchor();
             anchor.setCol1(col);
             anchor.setRow1(row);
+            
             Picture pict = drawing.createPicture(anchor, pictureIdx);
-            pict.resize(0.5); // Adjust size as needed
+            // pict.resize(0.5); // REMOVED: This causes ClassNotFoundException for java.awt.Dimension on Android
+            Log.d(TAG, "Signature image inserted successfully");
         } catch (Exception e) {
             Log.e(TAG, "Error inserting image to workbook", e);
         }

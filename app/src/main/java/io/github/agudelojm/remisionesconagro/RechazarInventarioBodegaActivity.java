@@ -4,6 +4,7 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 
@@ -51,30 +52,53 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         }
 
         // 1. Prepare Email
-        Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
-        emailIntent.setType("message/rfc822");
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""}); // Empty recipient as requested
+        Intent emailIntent = new Intent(Intent.ACTION_SEND);
+        emailIntent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Rechazo de Inventario - " + 
                 (userData != null ? userData.getOrDefault("nombre", "") : ""));
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Motivo de rechazo: " + motivo);
 
-        ArrayList<Uri> uris = new ArrayList<>();
-        File file = new File(getFilesDir(), "Inventario_Temp.xlsx");
-        if (!file.exists()) file = new File(getFilesDir(), "Inventario.xlsx");
-        
-        if (file.exists()) {
-            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", file);
-            uris.add(uri);
-        }
-        
-        emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-        emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-        // Cleanup temporary inventory on rejection
         File tempFile = new File(getFilesDir(), "Inventario_Temp.xlsx");
-        if (tempFile.exists()) tempFile.delete();
+        File definitiveFile = new File(getFilesDir(), "Inventario.xlsx");
+        File fileToShare = tempFile.exists() ? tempFile : definitiveFile;
+
+        ArrayList<Uri> uris = new ArrayList<>();
+        if (fileToShare.exists()) {
+            String originalName = Methods.getLastInventoryFileName(this);
+            if (originalName == null || originalName.isEmpty()) originalName = "Inventario_Rechazado.xlsx";
+            if (!originalName.toLowerCase().endsWith(".xlsx")) originalName += ".xlsx";
+            
+            File renamedFile = new File(getCacheDir(), originalName);
+            try {
+                if (renamedFile.getParentFile() != null && !renamedFile.getParentFile().exists()) renamedFile.getParentFile().mkdirs();
+                java.nio.file.Files.copy(fileToShare.toPath(), renamedFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                
+                uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", renamedFile));
+            } catch (Exception e) {
+                Log.e("Rechazo", "CRITICAL: Error copying to cache", e);
+            }
+        }
+
+        if (!uris.isEmpty()) {
+            emailIntent.setAction(Intent.ACTION_SEND_MULTIPLE);
+            emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }
 
         startActivity(Intent.createChooser(emailIntent, "Enviar Motivo de Rechazo..."));
-        finish();
+        
+        // Show confirmation dialog after starting intent
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Confirmación")
+                .setMessage("¿Se envió el correo correctamente? Si confirma, el archivo temporal será eliminado.")
+                .setPositiveButton("Sí, enviado", (dialog, which) -> {
+                    if (tempFile.exists()) tempFile.delete();
+                    Methods.setInventarioWbToNull();
+                    finish();
+                })
+                .setNegativeButton("No", (dialog, which) -> finish())
+                .setCancelable(false)
+                .show();
     }
 }

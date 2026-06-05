@@ -1,8 +1,11 @@
 package io.github.agudelojm.remisionesconagro;
 
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
 import android.widget.Button;
 import android.widget.TableLayout;
 import android.widget.TableRow;
@@ -30,8 +33,11 @@ public class InventarioBodegaActivity extends AppCompatActivity {
 
     private static final String TAG = "InventarioBodegaAct";
     private TableLayout tlyTabla;
+    private Button btnAceptar, btnRechazar;
     private HashMap<String, String> userData;
     private XSSFWorkbook inventarioWb;
+    private boolean alertShowing = false;
+    private boolean isTemporaryView = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,8 +73,8 @@ public class InventarioBodegaActivity extends AppCompatActivity {
 
     private void setupUI() {
         tlyTabla = findViewById(R.id.tly_TablaDatos_Inventario_Bodega);
-        Button btnAceptar = findViewById(R.id.btn_Aceptar_Inventario_Bodega);
-        Button btnRechazar = findViewById(R.id.btn_Rechazar_Inventario_Bodega);
+        btnAceptar = findViewById(R.id.btn_Aceptar_Inventario_Bodega);
+        btnRechazar = findViewById(R.id.btn_Rechazar_Inventario_Bodega);
 
         btnAceptar.setOnClickListener(v -> {
             Intent i = new Intent(this, PedirFirmaActivity.class);
@@ -84,18 +90,48 @@ public class InventarioBodegaActivity extends AppCompatActivity {
         });
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Refresh table in case a temp file was deleted or accepted
+        tlyTabla.removeAllViews();
+        // Re-add header
+        TableRow header = new TableRow(this);
+        header.setBackgroundColor(Color.LTGRAY);
+        header.setPadding(8,8,8,8);
+        header.addView(crearTextViewCelda("Ref", 1f));
+        header.addView(crearTextViewCelda("Nombre", 2f));
+        header.addView(crearTextViewCelda("Cant", 1f));
+        tlyTabla.addView(header);
+        
+        cargarInventario();
+    }
+
     private void cargarInventario() {
         try {
             // Priority 1: Temporary Inventory (New incoming file)
             inventarioWb = Methods.loadWorkbookFromFile(this, "Inventario_Temp.xlsx");
             
             if (inventarioWb != null) {
+                isTemporaryView = true;
+                btnAceptar.setVisibility(View.VISIBLE);
+                btnRechazar.setVisibility(View.VISIBLE);
                 poblarTabla(inventarioWb);
-                Methods.showAlert(this, "Mostrando Nuevo Inventario Pendiente de Aceptación.").show();
+                
+                if (!alertShowing) {
+                    alertShowing = true;
+                    AlertDialog ad = Methods.showAlert(this, "Mostrando Nuevo Inventario Pendiente de Aceptación.");
+                    ad.setOnDismissListener(dialog -> alertShowing = false);
+                    ad.show();
+                }
                 return;
             }
 
             // Priority 2: Definitive Inventory
+            isTemporaryView = false;
+            btnAceptar.setVisibility(View.GONE);
+            btnRechazar.setVisibility(View.GONE);
+
             inventarioWb = Methods.getInventarioWb();
             if (inventarioWb == null) {
                 inventarioWb = Methods.loadInventarioWb(this);

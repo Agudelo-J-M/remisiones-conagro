@@ -103,84 +103,84 @@ public class PedirFirmaActivity extends AppCompatActivity {
     }
 
     private void finalizarFlowInventario(File signatureFile) {
-        // 1. Load the signature as bytes to insert into the XLSX
-        byte[] imageBytes = null;
-        try {
-            Bitmap signatureBitmap = BitmapFactory.decodeFile(signatureFile.getAbsolutePath());
-            if (signatureBitmap != null) {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                signatureBitmap.compress(Bitmap.CompressFormat.PNG, 100, baos);
-                imageBytes = baos.toByteArray();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error processing signature for XLSX", e);
-        }
-
-        // 2. Load workbook and insert image
+        Log.d(TAG, "Starting finalizarFlowInventario");
+        
+        // 1. Prepare Workbook
         XSSFWorkbook wb = null;
         File tempFile = new File(getFilesDir(), "Inventario_Temp.xlsx");
-        
         try {
             if (tempFile.exists()) {
                 wb = Methods.loadWorkbookFromFile(this, "Inventario_Temp.xlsx");
             } else {
-                wb = Methods.getInventarioWb();
-                if (wb == null) wb = Methods.loadInventarioWb(this);
+                wb = Methods.loadInventarioWb(this);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error loading workbook for signature", e);
+            Log.e(TAG, "ERROR loading workbook", e);
         }
 
-        if (wb != null && imageBytes != null) {
-            try {
-                Sheet sheet = wb.getSheetAt(0);
-                int lastRow = sheet.getLastRowNum();
-                // Insert signature after the last data row
-                Methods.insertImageToWorkbook(wb, imageBytes, 0, lastRow + 2, 1);
-            } catch (Exception e) {
-                Log.e(TAG, "Error inserting signature into workbook", e);
-            }
-        }
+        // 2. Promotion & Cache Copy
+        String originalName = Methods.getLastInventoryFileName(this);
+        if (originalName == null || originalName.isEmpty()) originalName = "Inventario_Aceptado.xlsx";
+        if (!originalName.toLowerCase().endsWith(".xlsx")) originalName += ".xlsx";
 
-        // 3. Save the modified XLSX
-        // If it was a temp inventory, it now becomes the definitive one
+        // Save definitively as main database
         Methods.saveWorkbook(this, wb, "Inventario.xlsx");
-        
-        // Reload global reference if it's the main inventory
-        Methods.loadInventarioWb(this);
 
-        // 4. Email process
+        // Copy to cache for sharing
+        File shareFile = new File(getCacheDir(), originalName);
+        try {
+            if (shareFile.getParentFile() != null && !shareFile.getParentFile().exists()) shareFile.getParentFile().mkdirs();
+            try (FileOutputStream fos = new FileOutputStream(shareFile)) {
+                if (wb != null) wb.write(fos);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "ERROR saving share file", e);
+        }
+
+        // 3. Email process (Multiple Attachments)
+        Log.d(TAG, "Launching email intent multiple");
         Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
-        emailIntent.setType("message/rfc822");
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""}); // Empty so the user fills it
-        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Inventario de Bodega - " + 
-                (userData != null ? userData.getOrDefault("nombre", "") : ""));
-        emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto reporte de inventario con firma digital.");
+        emailIntent.setType("message/rfc822"); // Professional mail type
+        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
+        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Inventario de Bodega Aceptado - " + (userData != null ? userData.getOrDefault("nombre", "") : ""));
+        emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto reporte de inventario y firma digital por separado.");
 
         ArrayList<Uri> uris = new ArrayList<>();
-        File excelFile = new File(getFilesDir(), "Inventario.xlsx");
-        
-        if (excelFile.exists()) {
-            uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", excelFile));
+        if (shareFile.exists()) {
+            uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", shareFile));
         }
         if (signatureFile.exists()) {
             uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", signatureFile));
         }
 
-        emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-        emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (!uris.isEmpty()) {
+            emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }
 
         startActivity(Intent.createChooser(emailIntent, "Enviar Inventario..."));
 
-        // 5. Cleanup
-        if (signatureFile.exists()) signatureFile.delete();
-        if (tempFile.exists()) tempFile.delete();
+        // Show confirmation dialog before internal data promotion/cleanup
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Confirmación")
+                .setMessage("¿Se envió el correo correctamente? Si confirma, el inventario será guardado permanentemente y se vaciará el carro.")
+                .setPositiveButton("Sí, enviado", (dialog, which) -> {
+                    // SECURE DELETION: Only now we delete both sensitive files
+                    if (signatureFile.exists()) signatureFile.delete();
+                    if (tempFile.exists()) tempFile.delete();
+                    
+                    Methods.saveCarInventory(this, new HashMap<>());
+                    Methods.setInventarioWbToNull(); // Force reload next time
 
-        // Final Requirement: Clear Car Inventory when new Warehouse Inventory is accepted
-        Methods.saveCarInventory(this, new HashMap<>());
-
-        Methods.showAlert(this, "Inventario de Bodega Actualizado. El inventario del carro ha sido vaciado para asegurar la sincronización.")
-                .setOnDismissListener(dialog -> finish());
+                    Methods.showAlert(this, "Inventario de Bodega Actualizado. El inventario del carro ha sido vaciado para asegurar la sincronización.")
+                            .setOnDismissListener(d -> finish());
+                })
+                .setNegativeButton("No", (dialog, which) -> {
+                    // If NO, we stay here. No deletion.
+                    Methods.showAlert(this, "El envío fue cancelado. Puede intentarlo de nuevo.").show();
+                })
+                .setCancelable(false)
+                .show();
     }
 
     private void finalizarFlowGenerico(File signatureFile) {

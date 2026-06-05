@@ -10,6 +10,7 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.util.Arrays;
@@ -72,7 +73,13 @@ public class ActualizarDatos {
             }
             
             if (validateInventoryStructure(context, wb)) {
+                // Fresh start for CSV
+                File oldTempCsv = new File(context.getFilesDir(), "Inventario_Temp.xlsx");
+                if (oldTempCsv.exists()) oldTempCsv.delete();
+
                 Methods.saveWorkbook(context, wb, "Inventario_Temp.xlsx");
+                Methods.setInventarioWbToNull(); // Ensure it reloads from disk next time
+                Methods.setLastInventoryFileName(context, fileName.replace(".csv", ".xlsx"));
                 return "Inventario (CSV)";
             } else {
                 return "Error Formato CSV";
@@ -97,8 +104,14 @@ public class ActualizarDatos {
         } 
         // Identify if it's an inventory file (Must start with INV and have correct headers)
         else if (originalFileName.toUpperCase().startsWith("INV")) {
+            // Delete ANY existing temp file to ensure fresh import
+            File oldTemp = new File(context.getFilesDir(), "Inventario_Temp.xlsx");
+            if (oldTemp.exists()) oldTemp.delete();
+
             if (validateInventoryStructure(context, wb)) {
                 Methods.saveWorkbook(context, wb, "Inventario_Temp.xlsx");
+                Methods.setInventarioWbToNull(); // Ensure refresh
+                Methods.setLastInventoryFileName(context, originalFileName);
                 return "Inventario";
             }
         } 
