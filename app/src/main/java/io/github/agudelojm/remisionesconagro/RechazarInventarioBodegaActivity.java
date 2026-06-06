@@ -52,12 +52,15 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         }
 
         // 1. Prepare Email
-        Intent emailIntent = new Intent(Intent.ACTION_SEND);
-        emailIntent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+        emailIntent.setType("*/*");
         emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Rechazo de Inventario - " + 
                 (userData != null ? userData.getOrDefault("nombre", "") : ""));
-        emailIntent.putExtra(Intent.EXTRA_TEXT, "Motivo de rechazo: " + motivo);
+        
+        ArrayList<CharSequence> text = new ArrayList<>();
+        text.add("Motivo de rechazo: " + motivo);
+        emailIntent.putCharSequenceArrayListExtra(Intent.EXTRA_TEXT, text);
 
         File tempFile = new File(getFilesDir(), "Inventario_Temp.xlsx");
         File definitiveFile = new File(getFilesDir(), "Inventario.xlsx");
@@ -81,7 +84,6 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         }
 
         if (!uris.isEmpty()) {
-            emailIntent.setAction(Intent.ACTION_SEND_MULTIPLE);
             emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
             emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         }

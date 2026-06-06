@@ -103,7 +103,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
             return;
         }
 
-        // Template validation (Cumulative stock check)
+        // Rule 1: Validation against Warehouse Stock with "Add or Return" options
         if (Methods.getInventarioWb() != null) {
             double saldo = Methods.getInventarioSaldo(ref);
             if (saldo == -1.0) {
@@ -112,17 +112,33 @@ public class InventarioCarroActivity extends AppCompatActivity {
             }
 
             if (saldo == -1.0) {
-                Methods.showAlert(this, "Advertencia: El producto '" + query + "' no se encuentra en el inventario de bodega.").show();
+                new android.app.AlertDialog.Builder(this)
+                        .setTitle("Advertencia")
+                        .setMessage("El producto '" + ref + "' no se encuentra en el inventario de bodega. ¿Desea añadirlo de todos modos?")
+                        .setPositiveButton("Añadir", (dialog, which) -> commitEntrada(ref, nuevaCantidad))
+                        .setNegativeButton("Volver", (dialog, which) -> dialog.dismiss())
+                        .show();
+                return;
             } else {
                 int totalEnCarro = inventarioData.getOrDefault(ref, 0) + nuevaCantidad;
                 if (totalEnCarro > saldo) {
-                    Methods.showAlert(this, "Advertencia: La cantidad total en carro (" + totalEnCarro + ") supera el saldo en bodega (" + saldo + ").").show();
+                    new android.app.AlertDialog.Builder(this)
+                            .setTitle("Advertencia")
+                            .setMessage("La cantidad total en carro (" + totalEnCarro + ") supera el saldo en bodega (" + (int)saldo + "). ¿Desea añadirlo de todos modos?")
+                            .setPositiveButton("Añadir", (dialog, which) -> commitEntrada(ref, nuevaCantidad))
+                            .setNegativeButton("Volver", (dialog, which) -> dialog.dismiss())
+                            .show();
+                    return;
                 }
             }
         }
 
+        commitEntrada(ref, nuevaCantidad);
+    }
+
+    private void commitEntrada(String ref, int cantidad) {
         // Add to map using official Reference ID
-        inventarioData.put(ref, inventarioData.getOrDefault(ref, 0) + nuevaCantidad);
+        inventarioData.put(ref, inventarioData.getOrDefault(ref, 0) + cantidad);
 
         // Persist changes
         Methods.saveCarInventory(this, inventarioData);
@@ -143,11 +159,17 @@ public class InventarioCarroActivity extends AppCompatActivity {
             String name = Methods.getProductoName(this, id);
 
             TableRow row = new TableRow(this);
-            row.setPadding(0, 10, 0, 10);
+            row.setPadding(8, 8, 8, 8);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
-            row.addView(crearTextViewCelda(id, 1f));
-            row.addView(crearTextViewCelda(name != null ? name : "Error", 1.5f));
-            row.addView(crearTextViewCelda(qty, 0.8f));
+            row.addView(crearTextViewCelda(id, 1.1f));
+            
+            TextView tvNombre = crearTextViewCelda(name != null ? name : "Error", 1.8f);
+            tvNombre.setSingleLine(false);
+            tvNombre.setMaxLines(3);
+            row.addView(tvNombre);
+
+            row.addView(crearTextViewCelda(qty, 0.5f));
             row.addView(crearBotonEliminar(id));
 
             tlyTabla.addView(row);

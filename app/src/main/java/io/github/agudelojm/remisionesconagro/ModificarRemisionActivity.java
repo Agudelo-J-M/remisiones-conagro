@@ -63,10 +63,11 @@ public class ModificarRemisionActivity extends AppCompatActivity {
         
         for (Map<String, String> rem : remisiones) {
             TableRow row = new TableRow(this);
-            row.setPadding(0, 10, 0, 10);
+            row.setPadding(0, 15, 0, 15); // More vertical breathing room
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
-            row.addView(crearTextViewCelda(rem.get("consecutivo"), 0.8f));
-            row.addView(crearTextViewCelda(rem.get("finca_nombre"), 1.8f));
+            row.addView(crearTextViewCelda(rem.get("consecutivo"), 1.2f)); // More room for 12 digits
+            row.addView(crearTextViewCelda(rem.get("finca_nombre"), 1.6f));
             
             String fechaStr = rem.get("fecha");
             String formatted = "";
@@ -77,8 +78,17 @@ public class ModificarRemisionActivity extends AppCompatActivity {
             }
             row.addView(crearTextViewCelda(formatted, 1.2f));
             
-            Button btnMod = new Button(this);
+            // Ultra-compact "Modificar" Button
+            Button btnMod = new Button(this, null, androidx.appcompat.R.attr.buttonStyleSmall);
             btnMod.setText("Modificar");
+            btnMod.setPadding(10, 0, 10, 0); // Strip internal horizontal margins
+            btnMod.setMinWidth(0);
+            btnMod.setMinimumWidth(0);
+            btnMod.setAllCaps(false); // More compact text
+            TableRow.LayoutParams lp = new TableRow.LayoutParams(TableRow.LayoutParams.WRAP_CONTENT, TableRow.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(0, 0, 0, 0);
+            btnMod.setLayoutParams(lp);
+            
             btnMod.setOnClickListener(v -> {
                 Intent intent = new Intent(this, EditarRemisionActivity.class);
                 intent.putExtra("userData", userData);
@@ -95,7 +105,9 @@ public class ModificarRemisionActivity extends AppCompatActivity {
         TextView tv = new TextView(this);
         tv.setText(texto);
         tv.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, weight));
-        tv.setPadding(12, 12, 12, 12);
+        tv.setPadding(10, 10, 10, 10);
+        tv.setSingleLine(false); // Allow multiple lines
+        tv.setMaxLines(4);      // Allow up to 4 rows for long finca names
         return tv;
     }
 }

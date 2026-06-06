@@ -182,7 +182,14 @@ public class InventarioBodegaActivity extends AppCompatActivity {
                 // Use DataFormatter to prevent corrupted scientific notation on numeric IDs
                 String id = df.formatCellValue(row.getCell(idxItem));
                 String name = df.formatCellValue(row.getCell(idxNombre));
-                String qty = df.formatCellValue(row.getCell(idxCant));
+                String qtyRaw = df.formatCellValue(row.getCell(idxCant));
+                
+                // Format quantity as whole number
+                String qty = qtyRaw;
+                try {
+                    double val = Double.parseDouble(qtyRaw.replace(",", "."));
+                    qty = String.valueOf((int) val);
+                } catch (Exception e) { /* keep raw if not numeric */ }
 
                 TableRow tableRow = new TableRow(this);
                 tableRow.setPadding(0, 10, 0, 10);

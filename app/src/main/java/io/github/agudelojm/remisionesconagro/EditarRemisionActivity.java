@@ -11,7 +11,6 @@ import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ImageButton;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.Spinner;
@@ -183,18 +182,15 @@ public class EditarRemisionActivity extends AppCompatActivity {
                 );
                 itemsAgregados.add(item);
                 
+                // Cache ORIGINAL items for Virtual Stock Calculation
                 Map<String, String> original = new HashMap<>();
                 original.put("id", item.id);
                 original.put("cantidad", item.cantidad);
                 itemsOriginales.add(original);
             }
             
-            // Logic: Restore stock when modification starts
-            if (!json.optBoolean("restored", false)) {
-                Methods.restaurarStock(this, itemsOriginales);
-                // Mark as restored so we don't do it again if user re-enters modification
-                Methods.saveRemisionData(this, consecutivo, fincaActual, itemsToMap(itemsAgregados), userData, true);
-            }
+            // REMOVED: Immediate stock restoration. 
+            // We only restore stock physically once the user confirms successful edit.
             
             actualizarTabla();
         } catch (Exception e) {
@@ -229,12 +225,13 @@ public class EditarRemisionActivity extends AppCompatActivity {
     }
 
     private void agregarItem() {
-        String id, nombre, cantidad, precio;
-        cantidad = edtCantidad.getText().toString().trim();
-        if (cantidad.isEmpty() || "0".equals(cantidad)) {
+        String id, nombre, precio;
+        String cantidadStr = edtCantidad.getText().toString().trim();
+        if (cantidadStr.isEmpty() || "0".equals(cantidadStr)) {
             Methods.showAlert(this, "Ingrese una cantidad válida").show();
             return;
         }
+        int qtyToAdd = Integer.parseInt(cantidadStr);
 
         if (rbtProducto.isChecked()) {
             String ref = edtProductoRef.getText().toString().trim();
@@ -247,16 +244,35 @@ public class EditarRemisionActivity extends AppCompatActivity {
             nombre = prod.get("nombre");
             precio = prod.get("precio");
             
-            // Check InventarioCarro
+            // Rule: VIRTUAL STOCK Logic
+            // available = (Physical Car Stock) + (Original items in THIS remission)
             HashMap<String, Integer> carInv = Methods.getCarInventory(this);
-            if (!carInv.containsKey(id)) {
+            int currentInCar = carInv.getOrDefault(id, 0);
+            
+            int quantityInOriginalRemission = 0;
+            for (Map<String, String> orig : itemsOriginales) {
+                if (orig.get("id").equalsIgnoreCase(id)) {
+                    quantityInOriginalRemission += Integer.parseInt(orig.get("cantidad"));
+                }
+            }
+            
+            int totalVirtualAvailable = currentInCar + quantityInOriginalRemission;
+
+            if (totalVirtualAvailable == 0) {
                 Methods.showAlert(this, "Error: El producto no se encuentra en el inventario del carro.").show();
                 return;
             }
-            Integer currentQty = carInv.get(id);
-            if ((currentQty != null ? currentQty : 0) < Integer.parseInt(cantidad)) {
-                Methods.showAlert(this, "Advertencia: Cantidad en carro insuficiente (" + currentQty + ")").show();
-                // We still allow it as per requirement, but showing warning.
+
+            int alreadyInEditList = 0;
+            for (IngresarRemisionActivity.ItemRemision existing : itemsAgregados) {
+                if (existing.id.equalsIgnoreCase(id)) {
+                    alreadyInEditList += Integer.parseInt(existing.cantidad);
+                }
+            }
+
+            if (alreadyInEditList + qtyToAdd > totalVirtualAvailable) {
+                Methods.showAlert(this, "Error: La cantidad (" + (alreadyInEditList + qtyToAdd) + ") supera el inventario disponible (Stock: " + currentInCar + " + Remisión Original: " + quantityInOriginalRemission + ")").show();
+                return;
             }
         } else {
             String selection = (String) spnMantenimiento.getSelectedItem();
@@ -267,10 +283,25 @@ public class EditarRemisionActivity extends AppCompatActivity {
             precio = mant.get("precio_base");
         }
 
-        itemsAgregados.add(new IngresarRemisionActivity.ItemRemision(id, nombre, cantidad, precio));
+        // Sum quantities if item already exists
+        boolean exists = false;
+        for (IngresarRemisionActivity.ItemRemision existing : itemsAgregados) {
+            if (existing.id.equalsIgnoreCase(id)) {
+                int currentQty = Integer.parseInt(existing.cantidad);
+                existing.cantidad = String.valueOf(currentQty + qtyToAdd);
+                exists = true;
+                break;
+            }
+        }
+
+        if (!exists) {
+            itemsAgregados.add(new IngresarRemisionActivity.ItemRemision(id, nombre, cantidadStr, precio));
+        }
+
         actualizarTabla();
         edtProductoRef.setText("");
         tvwNombreProducto.setText("");
+        edtCantidad.setText("1");
     }
 
     private void actualizarTabla() {
@@ -280,15 +311,26 @@ public class EditarRemisionActivity extends AppCompatActivity {
         for (int i = 0; i < itemsAgregados.size(); i++) {
             IngresarRemisionActivity.ItemRemision item = itemsAgregados.get(i);
             TableRow row = new TableRow(this);
-            row.setPadding(0, 10, 0, 10);
+            row.setPadding(8, 8, 8, 8);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
             
-            row.addView(crearTextViewCelda(item.id, 0.8f));
-            row.addView(crearTextViewCelda(item.nombre, 2f));
-            row.addView(crearTextViewCelda(item.cantidad, 0.6f));
+            row.addView(crearTextViewCelda(item.id, 1.1f));
             
-            ImageButton btnDelete = new ImageButton(this);
-            btnDelete.setImageResource(android.R.drawable.ic_menu_delete);
-            btnDelete.setBackgroundColor(Color.TRANSPARENT);
+            TextView tvNombre = crearTextViewCelda(item.nombre, 1.8f);
+            tvNombre.setSingleLine(false);
+            tvNombre.setMaxLines(3);
+            row.addView(tvNombre);
+
+            row.addView(crearTextViewCelda(item.cantidad, 0.5f));
+            
+            Button btnDelete = new Button(this, null, androidx.appcompat.R.attr.buttonStyleSmall);
+            btnDelete.setText("X");
+            btnDelete.setTextColor(Color.WHITE);
+            btnDelete.setBackgroundColor(Color.RED);
+            btnDelete.setMinWidth(0);
+            btnDelete.setMinimumWidth(0);
+            btnDelete.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 0.6f));
+
             int finalI = i;
             btnDelete.setOnClickListener(v -> {
                 itemsAgregados.remove(finalI);
@@ -313,7 +355,26 @@ public class EditarRemisionActivity extends AppCompatActivity {
             Methods.showAlert(this, "Agregue items antes de finalizar").show();
             return;
         }
-        pedirFirmaTecnico();
+
+        // Feature: Validate Email and Show Office Reminder
+        String email = fincaActual != null ? fincaActual.getOrDefault("persona_email", "") : "";
+        if (email == null || email.trim().isEmpty()) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("Email Faltante")
+                    .setMessage("El email del cliente no está en la base de datos. Por favor solicítelo para enviarle una copia.")
+                    .setPositiveButton("Continuar", (dialog, which) -> showOfficeReminder())
+                    .show();
+        } else {
+            showOfficeReminder();
+        }
+    }
+
+    private void showOfficeReminder() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Recordatorio")
+                .setMessage("No olvide ingresar el correo de la oficina para enviar esta remisión.")
+                .setPositiveButton("Entendido", (dialog, which) -> pedirFirmaTecnico())
+                .show();
     }
 
     private void pedirFirmaTecnico() {
@@ -333,16 +394,10 @@ public class EditarRemisionActivity extends AppCompatActivity {
     }
 
     private void ejecutarGeneracionPDF() {
-        // 1. Deduct New Stock (Old stock was already restored at start)
+        // 1. Deduct New Stock (Actual physical update happens ONLY ON CONFIRMATION)
         List<Map<String, String>> pdfItems = itemsToMap(itemsAgregados);
         
-        Methods.updateWarehouseStock(this, pdfItems);
-        Methods.updateCarStock(this, pdfItems);
-
-        // 2. Save New JSON (marking restored=false since it's now finalized with new stock)
-        Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
-
-        // 3. Generate PDF
+        // 2. Generate PDF
         File fileT = new File(getFilesDir(), "firma_tecnico_" + consecutivo + ".png");
         File fileC = new File(getFilesDir(), "firma_cliente_" + consecutivo + ".png");
         Bitmap bT = BitmapFactory.decodeFile(fileT.getAbsolutePath());
@@ -351,23 +406,57 @@ public class EditarRemisionActivity extends AppCompatActivity {
         File pdfFile = Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bT, bC);
         
         if (pdfFile != null && pdfFile.exists()) {
-            enviarRemisionPorEmail(pdfFile, fileT, fileC);
+            enviarRemisionPorEmail(pdfFile, fileT, fileC, pdfItems);
         } else {
+            // Cleanup on failure
+            if (fileT.exists()) fileT.delete();
+            if (fileC.exists()) fileC.delete();
             Methods.showAlert(this, "Error generando PDF").show();
         }
     }
 
-    private void enviarRemisionPorEmail(File pdf, File t, File c) {
+    private void enviarRemisionPorEmail(File pdf, File t, File c, List<Map<String, String>> pdfItems) {
+        String clientEmail = fincaActual != null ? fincaActual.getOrDefault("persona_email", "") : "";
+        
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("application/pdf");
+        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{clientEmail});
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión Editada " + consecutivo);
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto remisión actualizada.");
         emailIntent.putExtra(Intent.EXTRA_STREAM, androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", pdf));
         emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivity(Intent.createChooser(emailIntent, "Enviar..."));
         
-        if (t.exists()) t.delete();
-        if (c.exists()) c.delete();
-        finish();
+        // Confirmation Prompt
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Confirmación")
+                .setMessage("¿Se envió el correo correctamente? Si confirma, se aplicarán los cambios al inventario permanentemente.")
+                .setPositiveButton("Sí, enviado", (dialog, which) -> {
+                    // 1. RESTORE OLD STOCK FIRST (Physically)
+                    Methods.restaurarStock(this, itemsOriginales);
+                    
+                    // 2. DEDUCT NEW STOCK (Physically)
+                    Methods.updateWarehouseStock(this, pdfItems);
+                    Methods.updateCarStock(this, pdfItems);
+
+                    // 3. SECURE DELETION of signatures and PDF
+                    if (t.exists()) t.delete();
+                    if (c.exists()) c.delete();
+                    if (pdf.exists()) pdf.delete();
+                    
+                    // 4. Update permanent metadata
+                    Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
+                    
+                    finish();
+                })
+                .setNegativeButton("No", (dialog, which) -> {
+                    // Signatures must be deleted regardless
+                    if (t.exists()) t.delete();
+                    if (c.exists()) c.delete();
+                    if (pdf.exists()) pdf.delete();
+                    Methods.showAlert(this, "El envío fue cancelado. Las firmas han sido borradas por seguridad, firme de nuevo para reintentar.").show();
+                })
+                .setCancelable(false)
+                .show();
     }
 }

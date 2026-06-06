@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.ArrayAdapter;
@@ -24,6 +25,8 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
+
+import org.json.JSONObject;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -85,6 +88,56 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         if (consecutivo != null && !consecutivo.isEmpty()) {
             tvwTitulo.setText(getString(R.string.ingresar_remisi_n) + " - " + consecutivo);
         }
+
+        // Feature 1: Load draft if exists
+        loadDraft();
+    }
+
+    private void loadDraft() {
+        JSONObject draft = Methods.loadDraftRemision(this);
+        if (draft == null) return;
+        try {
+            if (draft.has("fincaData")) {
+                JSONObject fincaJson = draft.getJSONObject("fincaData");
+                fincaActual = new HashMap<>();
+                java.util.Iterator<String> keys = fincaJson.keys();
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    fincaActual.put(key, fincaJson.getString(key));
+                }
+                edtFincaID.setText(fincaActual.getOrDefault("finca_id", ""), false);
+                tvwNombreFinca.setText(fincaActual.getOrDefault("finca_nombre", ""));
+                tvwNombreFinca.setTextColor(getResources().getColor(R.color.blue));
+            }
+            if (draft.has("items")) {
+                org.json.JSONArray itemsArray = draft.getJSONArray("items");
+                for (int i = 0; i < itemsArray.length(); i++) {
+                    JSONObject itemJson = itemsArray.getJSONObject(i);
+                    itemsAgregados.add(new ItemRemision(
+                            itemJson.getString("id"),
+                            itemJson.getString("nombre"),
+                            itemJson.getString("cantidad"),
+                            itemJson.getString("precio")
+                    ));
+                }
+                actualizarTabla();
+            }
+        } catch (Exception e) {
+            Log.e("Draft", "Error loading draft", e);
+        }
+    }
+
+    private void saveDraft() {
+        List<Map<String, String>> mappedItems = new ArrayList<>();
+        for (ItemRemision item : itemsAgregados) {
+            Map<String, String> m = new HashMap<>();
+            m.put("id", item.id);
+            m.put("nombre", item.nombre);
+            m.put("cantidad", item.cantidad);
+            m.put("precio", item.precio);
+            mappedItems.add(m);
+        }
+        Methods.saveDraftRemision(this, fincaActual, mappedItems);
     }
 
     private void initViews() {
@@ -165,6 +218,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             tvwNombreFinca.setTextColor(getResources().getColor(R.color.blue));
             // Update text to just the ID to avoid messy submission
             edtFincaID.setText(fincaActual.getOrDefault("finca_id", query), false);
+            saveDraft();
         } else {
             tvwNombreFinca.setText(query + " no encontrado");
             tvwNombreFinca.setTextColor(Color.RED);
@@ -212,6 +266,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             Methods.showAlert(this, "Ingrese una cantidad válida").show();
             return;
         }
+        int qtyToAdd = Integer.parseInt(cantidadStr);
 
         Map<String, String> itemData = null;
         if (rbtProducto.isChecked()) {
@@ -228,23 +283,50 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             String id = itemData.get("id");
             if (rbtProducto.isChecked()) {
                 HashMap<String, Integer> carInv = Methods.getCarInventory(this);
-                if (!carInv.containsKey(id)) {
+                int currentInCar = carInv.getOrDefault(id, 0);
+                
+                // Rule 1: No adding if total exceeds Car Inventory
+                if (currentInCar == 0) {
                     Methods.showAlert(this, "Error: El producto no se encuentra en el inventario del carro.").show();
                     return;
                 }
-                Integer currentQty = carInv.get(id);
-                if ((currentQty != null ? currentQty : 0) < Integer.parseInt(cantidadStr)) {
-                    Methods.showAlert(this, "Advertencia: Cantidad en carro insuficiente (" + currentQty + ")").show();
+                
+                // Calculate how much is already in the list
+                int alreadyInList = 0;
+                for (ItemRemision existing : itemsAgregados) {
+                    if (existing.id.equalsIgnoreCase(id)) {
+                        alreadyInList += Integer.parseInt(existing.cantidad);
+                    }
+                }
+
+                if (alreadyInList + qtyToAdd > currentInCar) {
+                    Methods.showAlert(this, "Error: La cantidad (" + (alreadyInList + qtyToAdd) + ") supera el inventario en carro (" + currentInCar + ")").show();
+                    return;
                 }
             }
 
-            itemsAgregados.add(new ItemRemision(
-                    id,
-                    itemData.get("nombre"),
-                    cantidadStr,
-                    itemData.get("precio")
-            ));
+            // Rule 2: Sum quantities if item already exists in the list
+            boolean exists = false;
+            for (ItemRemision existing : itemsAgregados) {
+                if (existing.id.equalsIgnoreCase(id)) {
+                    int currentQty = Integer.parseInt(existing.cantidad);
+                    existing.cantidad = String.valueOf(currentQty + qtyToAdd);
+                    exists = true;
+                    break;
+                }
+            }
+
+            if (!exists) {
+                itemsAgregados.add(new ItemRemision(
+                        id,
+                        itemData.get("nombre"),
+                        cantidadStr,
+                        itemData.get("precio")
+                ));
+            }
+
             actualizarTabla();
+            saveDraft();
             
             // Clear inputs
             edtProductoRef.setText("");
@@ -265,29 +347,35 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             ItemRemision item = itemsAgregados.get(i);
             TableRow row = new TableRow(this);
             row.setPadding(8, 8, 8, 8);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
             TextView tvId = new TextView(this);
             tvId.setText(item.id);
-            tvId.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 0.8f));
+            tvId.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 1.1f));
 
             TextView tvNombre = new TextView(this);
             tvNombre.setText(item.nombre);
-            tvNombre.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 2.0f));
+            tvNombre.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 1.8f));
+            tvNombre.setSingleLine(false); // Enable wrap
+            tvNombre.setMaxLines(3);
 
             TextView tvCant = new TextView(this);
             tvCant.setText(item.cantidad);
-            tvCant.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 0.6f));
+            tvCant.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 0.5f));
 
-            Button btnDel = new Button(this);
+            Button btnDel = new Button(this, null, androidx.appcompat.R.attr.buttonStyleSmall);
             btnDel.setText("X");
             btnDel.setTextColor(Color.WHITE);
             btnDel.setBackgroundColor(Color.RED);
-            btnDel.setLayoutParams(new TableRow.LayoutParams(0, 100, 0.6f));
+            btnDel.setMinWidth(0);
+            btnDel.setMinimumWidth(0);
+            btnDel.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 0.6f));
             
             final int index = i;
             btnDel.setOnClickListener(v -> {
                 itemsAgregados.remove(index);
                 actualizarTabla();
+                saveDraft();
             });
 
             row.addView(tvId);
@@ -304,7 +392,26 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             Methods.showAlert(this, "Complete los datos y agregue items antes de finalizar").show();
             return;
         }
-        pedirFirmaTecnico();
+
+        // Feature: Validate Email and Show Office Reminder
+        String email = fincaActual.getOrDefault("persona_email", "").trim();
+        if (email.isEmpty()) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("Email Faltante")
+                    .setMessage("El email del cliente no está en la base de datos. Por favor solicítelo para enviarle una copia.")
+                    .setPositiveButton("Continuar", (dialog, which) -> showOfficeReminder())
+                    .show();
+        } else {
+            showOfficeReminder();
+        }
+    }
+
+    private void showOfficeReminder() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Recordatorio")
+                .setMessage("No olvide ingresar el correo de la oficina para enviar esta remisión.")
+                .setPositiveButton("Entendido", (dialog, which) -> pedirFirmaTecnico())
+                .show();
     }
 
     private void pedirFirmaTecnico() {
@@ -342,28 +449,26 @@ public class IngresarRemisionActivity extends AppCompatActivity {
 
         File pdfFile = Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bTecnico, bCliente);
         
-        // Clean up PNGs
-        if (fileT.exists()) fileT.delete();
-        if (fileC.exists()) fileC.delete();
-        
         if (pdfFile != null && pdfFile.exists()) {
             // Deduct from inventories
             Methods.updateWarehouseStock(this, pdfItems);
             Methods.updateCarStock(this, pdfItems);
 
-            // Save remission metadata for future modification
-            Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
-
-            enviarRemisionPorEmail(pdfFile, fileT, fileC);
+            enviarRemisionPorEmail(pdfFile, fileT, fileC, pdfItems);
         } else {
+            // If PDF failed, still clean up sensitive signatures
+            if (fileT.exists()) fileT.delete();
+            if (fileC.exists()) fileC.delete();
             Methods.showAlert(this, "Error generando el PDF de remisión.").show();
         }
     }
 
-    private void enviarRemisionPorEmail(File pdfFile, File sigT, File sigC) {
+    private void enviarRemisionPorEmail(File pdfFile, File sigT, File sigC, List<Map<String, String>> pdfItems) {
+        String clientEmail = fincaActual != null ? fincaActual.getOrDefault("persona_email", "") : "";
+        
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("application/pdf");
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
+        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{clientEmail});
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión " + consecutivo + " - " + 
                 fincaActual.getOrDefault("finca_nombre", ""));
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto remisión generada.");
@@ -374,11 +479,42 @@ public class IngresarRemisionActivity extends AppCompatActivity {
 
         startActivity(Intent.createChooser(emailIntent, "Enviar Remisión..."));
         
-        // Final cleanup of signature files after intent is started
-        if (sigT.exists()) sigT.delete();
-        if (sigC.exists()) sigC.delete();
+        // Confirmation Prompt
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Confirmación")
+                .setMessage("¿Se envió el correo correctamente? Si confirma, se limpiarán los datos y se guardará la remisión.")
+                .setPositiveButton("Sí, enviado", (dialog, which) -> {
+                    // SECURE DELETION of signatures and PDF
+                    if (sigT.exists()) sigT.delete();
+                    if (sigC.exists()) sigC.delete();
+                    if (pdfFile.exists()) pdfFile.delete();
+                    
+                    // SAVE Metadata for future editing ONLY on SUCCESS
+                    Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
+                    
+                    // FLUSH DRAFT and local state
+                    Methods.deleteDraftRemision(this);
+                    itemsAgregados.clear();
+                    fincaActual = null;
+                    
+                    finish();
+                })
+                .setNegativeButton("No", (dialog, which) -> {
+                    // ALWAYS delete signatures and PDF regardless of status for privacy
+                    if (sigT.exists()) sigT.delete();
+                    if (sigC.exists()) sigC.delete();
+                    if (pdfFile.exists()) pdfFile.delete();
+                    
+                    // CLEAR the Pad in the Background logic already handled,
+                    // but we ensure the activity is refreshed for a clean retry.
+                    actualizarTabla(); 
 
-        finish();
+                    // We DO NOT save the metadata and DO NOT delete the draft.
+                    // Technician must sign again.
+                    Methods.showAlert(this, "El envío fue cancelado. Las firmas han sido borradas por seguridad, firme de nuevo para reintentar.").show();
+                })
+                .setCancelable(false)
+                .show();
     }
 
     public static class ItemRemision {

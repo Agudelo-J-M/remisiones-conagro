@@ -36,20 +36,43 @@ public class PedirFirmaActivity extends AppCompatActivity {
     private String consecutivo = "";
 
     @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        // Prevent large bitmap parcel crash by removing ID temporarily
+        if (mSignaturePad != null) {
+            int originalId = mSignaturePad.getId();
+            mSignaturePad.setId(android.view.View.NO_ID);
+            super.onSaveInstanceState(outState);
+            mSignaturePad.setId(originalId);
+        } else {
+            super.onSaveInstanceState(outState);
+        }
+        outState.putSerializable("userData", userData);
+        outState.putString("flowType", flowType);
+        outState.putString("consecutivo", consecutivo);
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_pedir_firma);
 
         Methods.updateActivity(this);
 
-        // Handle Intent Extras
-        Intent intent = getIntent();
-        Serializable serializable = intent.getSerializableExtra("userData");
-        if (serializable instanceof HashMap) {
-            userData = (HashMap<String, String>) serializable;
+        // Handle Intent Extras or Saved State
+        if (savedInstanceState != null) {
+            userData = (HashMap<String, String>) savedInstanceState.getSerializable("userData");
+            flowType = savedInstanceState.getString("flowType");
+            consecutivo = savedInstanceState.getString("consecutivo");
+        } else {
+            Intent intent = getIntent();
+            Serializable serializable = intent.getSerializableExtra("userData");
+            if (serializable instanceof HashMap) {
+                userData = (HashMap<String, String>) serializable;
+            }
+            flowType = intent.getStringExtra("flowType");
+            consecutivo = intent.getStringExtra("consecutivo");
         }
-        flowType = intent.getStringExtra("flowType");
-        consecutivo = intent.getStringExtra("consecutivo");
+
         if (consecutivo == null) consecutivo = "";
 
         TextView tvwTitulo = findViewById(R.id.tvw_Titulo_Pedir_Firma);
@@ -82,8 +105,14 @@ public class PedirFirmaActivity extends AppCompatActivity {
 
         File signatureFile = new File(getFilesDir(), fileName);
         try (FileOutputStream out = new FileOutputStream(signatureFile)) {
+            // Use getTransparentSignatureBitmap() or getSignatureBitmap() with solid bg
+            // getSignatureBitmap() usually provides the solid background version
             Bitmap signatureBitmap = mSignaturePad.getSignatureBitmap();
             signatureBitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+            
+            // CRITICAL: Clear pad immediately to avoid parcel blob crash in background
+            mSignaturePad.clear();
+            Log.d(TAG, "Signature saved and pad cleared");
         } catch (Exception e) {
             Log.e(TAG, "Error saving signature", e);
             Methods.showAlert(this, "Error guardando la firma, intente nuevamente").show();
@@ -140,21 +169,28 @@ public class PedirFirmaActivity extends AppCompatActivity {
         // 3. Email process (Multiple Attachments)
         Log.d(TAG, "Launching email intent multiple");
         Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
-        emailIntent.setType("message/rfc822"); // Professional mail type
+        emailIntent.setType("*/*"); // Broadest compatibility
         emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Inventario de Bodega Aceptado - " + (userData != null ? userData.getOrDefault("nombre", "") : ""));
+        
+        // STANDARD: Most email apps expect EXTRA_TEXT as a String even in ACTION_SEND_MULTIPLE
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto reporte de inventario y firma digital por separado.");
 
         ArrayList<Uri> uris = new ArrayList<>();
         if (shareFile.exists()) {
-            uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", shareFile));
+            Uri uXls = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", shareFile);
+            uris.add(uXls);
+            Log.d(TAG, "Added XLS URI: " + uXls);
         }
         if (signatureFile.exists()) {
-            uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", signatureFile));
+            Uri uSig = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", signatureFile);
+            uris.add(uSig);
+            Log.d(TAG, "Added SIG URI: " + uSig);
         }
 
         if (!uris.isEmpty()) {
             emailIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            // CRITICAL: Explicitly grant permissions to the list
             emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         }
 
@@ -172,12 +208,14 @@ public class PedirFirmaActivity extends AppCompatActivity {
                     Methods.saveCarInventory(this, new HashMap<>());
                     Methods.setInventarioWbToNull(); // Force reload next time
 
-                    Methods.showAlert(this, "Inventario de Bodega Actualizado. El inventario del carro ha sido vaciado para asegurar la sincronización.")
-                            .setOnDismissListener(d -> finish());
+                    // Close activity immediately after confirmation
+                    finish();
                 })
                 .setNegativeButton("No", (dialog, which) -> {
-                    // If NO, we stay here. No deletion.
-                    Methods.showAlert(this, "El envío fue cancelado. Puede intentarlo de nuevo.").show();
+                    // If NO, we stay here. Signature is sensitive, so we delete it anyway.
+                    if (signatureFile.exists()) signatureFile.delete();
+                    mSignaturePad.clear();
+                    Methods.showAlert(this, "El envío fue cancelado. Por favor, firme nuevamente si desea reintentar.").show();
                 })
                 .setCancelable(false)
                 .show();

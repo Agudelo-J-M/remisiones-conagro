@@ -79,7 +79,7 @@ public class Methods {
      * Initializes the application data by loading the "Datos App.xlsx" workbook and extracting sheets.
      */
     public static void initializeData(Context context) {
-        alertDialog = showAlert(context, "Leyendo Exceles...");
+        alertDialog = showLoading(context, "Leyendo Exceles...");
         alertDialog.show();
 
         final Handler handler = new Handler(Looper.getMainLooper());
@@ -204,6 +204,17 @@ public class Methods {
                 .setTitle("Alerta")
                 .setMessage(message)
                 .setNeutralButton("OK", (dialog, which) -> dialog.dismiss())
+                .create();
+    }
+
+    /**
+     * Displays a loading dialog without buttons that cannot be dismissed by the user.
+     */
+    public static AlertDialog showLoading(Context context, String message) {
+        return new AlertDialog.Builder(context)
+                .setTitle("Cargando")
+                .setMessage(message)
+                .setCancelable(false)
                 .create();
     }
 
@@ -545,44 +556,46 @@ public class Methods {
 
     /**
      * Returns a list of all Finca IDs formatted as "ID - Name".
+     * Uses a LinkedHashSet internally to prevent duplicates.
      */
     public static List<String> getListaFincas() {
-        List<String> lista = new ArrayList<>();
-        if (clientesSheet == null) return lista;
+        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+        if (clientesSheet == null) return new ArrayList<>();
         int idxId = getColumnIndex(clientesSheet, "finca_id");
-        int idxNom = getColumnIndex(clientesSheet, "persona_nombre");
-        if (idxId == -1) return lista;
+        int idxNom = getColumnIndex(clientesSheet, "finca_nombre"); // Corrected to finca_nombre
+        if (idxId == -1) return new ArrayList<>();
 
         for (Row row : clientesSheet) {
             if (row.getRowNum() == 0) continue;
             String id = dataFormatter.formatCellValue(row.getCell(idxId));
             String nom = (idxNom != -1) ? dataFormatter.formatCellValue(row.getCell(idxNom)) : "";
             if (!id.isEmpty()) {
-                lista.add(id + (nom.isEmpty() ? "" : " - " + nom));
+                set.add(id + (nom.isEmpty() ? "" : " - " + nom));
             }
         }
-        return lista;
+        return new ArrayList<>(set);
     }
 
     /**
      * Returns a list of all Product References formatted as "Ref - Name".
+     * Uses a LinkedHashSet internally to prevent duplicates.
      */
     public static List<String> getListaProductos() {
-        List<String> lista = new ArrayList<>();
-        if (productosSheet == null) return lista;
+        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+        if (productosSheet == null) return new ArrayList<>();
         int idxRef = getColumnIndex(productosSheet, "referencia");
         int idxNom = getColumnIndex(productosSheet, "nombre");
-        if (idxRef == -1) return lista;
+        if (idxRef == -1) return new ArrayList<>();
 
         for (Row row : productosSheet) {
             if (row.getRowNum() == 0) continue;
             String ref = dataFormatter.formatCellValue(row.getCell(idxRef));
             String nom = (idxNom != -1) ? dataFormatter.formatCellValue(row.getCell(idxNom)) : "";
             if (!ref.isEmpty()) {
-                lista.add(ref + (nom.isEmpty() ? "" : " - " + nom));
+                set.add(ref + (nom.isEmpty() ? "" : " - " + nom));
             }
         }
-        return lista;
+        return new ArrayList<>(set);
     }
 
     /**
@@ -636,7 +649,7 @@ public class Methods {
     /**
      * Loads the car inventory from a JSON file in internal storage.
      */
-    public static HashMap<String, Integer> getCarInventory(Context context) {
+    public static synchronized HashMap<String, Integer> getCarInventory(Context context) {
         HashMap<String, Integer> inventory = new HashMap<>();
         File file = new File(context.getFilesDir(), "InventarioCarro.json");
         if (!file.exists()) return inventory;
@@ -707,6 +720,48 @@ public class Methods {
         } catch (Exception e) {
             Log.e(TAG, "Error saving remission JSON", e);
         }
+    }
+
+    public static synchronized void saveDraftRemision(Context context, Map<String, String> fincaData, List<Map<String, String>> items) {
+        try {
+            JSONObject json = new JSONObject();
+            if (fincaData != null) json.put("fincaData", new JSONObject(fincaData));
+            
+            org.json.JSONArray itemsArray = new org.json.JSONArray();
+            if (items != null) {
+                for (Map<String, String> item : items) {
+                    itemsArray.put(new JSONObject(item));
+                }
+            }
+            json.put("items", itemsArray);
+            
+            File file = new File(context.getFilesDir(), "remision_draft.json");
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(json.toString().getBytes("UTF-8"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving draft", e);
+        }
+    }
+
+    public static JSONObject loadDraftRemision(Context context) {
+        File file = new File(context.getFilesDir(), "remision_draft.json");
+        if (!file.exists()) return null;
+        try (FileInputStream fis = new FileInputStream(file)) {
+            byte[] data = new byte[(int) file.length()];
+            int read = fis.read(data);
+            if (read == 0) return null;
+            return new JSONObject(new String(data, "UTF-8"));
+        } catch (Exception e) {
+            Log.e(TAG, "Draft corrupted or unreadable", e);
+            file.delete(); // Auto-clean corrupted drafts
+            return null;
+        }
+    }
+
+    public static void deleteDraftRemision(Context context) {
+        File file = new File(context.getFilesDir(), "remision_draft.json");
+        if (file.exists()) file.delete();
     }
 
     /**
@@ -967,27 +1022,30 @@ public class Methods {
             Canvas canvas = page.getCanvas();
             float x = 50, y = 50;
 
-            // Header (on every page)
-            canvas.drawText("CONAGRO S.A.", x, y, titlePaint);
-            y += 20;
-            paint.setTextSize(9f);
-            canvas.drawText("EQUIPOS DE ORDEÑO - INEMINACIÓN - ACCESORIOS", x, y, paint);
-            y += 15;
-            canvas.drawText("NIT. 890.922.928 - 5. Direccion: Cra. 43A No.27ASur - 86 Local 301 - 4. Centro empresarial la Casona.", x, y, paint);
-            y += 12;
-            canvas.drawText("PBX: 557 55 28 cel: 311 876 15 39.", x, y, paint);
+        // Header (on every page)
+        canvas.drawText("CONAGRO S.A.", x, y, titlePaint);
+        y += 20;
+        paint.setTextSize(9f);
+        canvas.drawText("EQUIPOS DE ORDEÑO - INSEMINACIÓN - ACCESORIOS", x, y, paint);
+        y += 15;
+        canvas.drawText("NIT. 890.922.928 - 5. Direccion: Cra. 43A No.27ASur - 86 Local 301 - 4. Centro empresarial la Casona.", x, y, paint);
+        y += 12;
+        canvas.drawText("PBX: 557 55 28 cel: 311 876 15 39.", x, y, paint);
 
-            y += 20;
-            canvas.drawText("FECHA: " + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")), x, y, paint);
-            canvas.drawText("REMISIÓN: " + consecutivo, 400, y, titlePaint);
-            canvas.drawText("PÁGINA " + (p + 1) + " DE " + totalPages, 400, y + 20, paint);
+        y += 20;
+        canvas.drawText("FECHA: " + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")), x, y, paint);
+        canvas.drawText("REMISIÓN: " + consecutivo, 400, y, titlePaint);
+        canvas.drawText("PÁGINA " + (p + 1) + " DE " + totalPages, 400, y + 20, paint);
 
-            y += 30;
-            canvas.drawText("ID FINCA: " + fincaData.getOrDefault("finca_id", ""), x, y, paint);
-            canvas.drawText("FINCA: " + fincaData.getOrDefault("direccion", ""), 200, y, paint);
-            y += 15;
-            canvas.drawText("PERSONA: " + fincaData.getOrDefault("persona_nombre", ""), x, y, paint);
-            canvas.drawText("TEL: " + fincaData.getOrDefault("persona_telefono", ""), 350, y, paint);
+        y += 30;
+        canvas.drawText("ID FINCA: " + fincaData.getOrDefault("finca_id", ""), x, y, paint);
+        canvas.drawText("FINCA: " + fincaData.getOrDefault("finca_nombre", ""), 200, y, paint); // Corrected mapping
+        y += 15;
+        canvas.drawText("CIUDAD: " + fincaData.getOrDefault("ciu", ""), x, y, paint); // Added Ciudad
+        canvas.drawText("DIRECCIÓN: " + fincaData.getOrDefault("direccion", ""), 200, y, paint); // Added Dirección
+        y += 15;
+        canvas.drawText("PERSONA: " + fincaData.getOrDefault("persona_nombre", ""), x, y, paint);
+        canvas.drawText("TEL: " + fincaData.getOrDefault("persona_telefono", ""), 350, y, paint);
 
             y += 30;
             // Table Header
@@ -1009,16 +1067,42 @@ public class Methods {
                 Map<String, String> item = items.get(i);
                 canvas.drawText(item.getOrDefault("id", ""), x, y, paint);
                 canvas.drawText(item.getOrDefault("nombre", ""), x + 60, y, paint);
-                canvas.drawText(item.getOrDefault("cantidad", ""), x + 300, y, paint);
+                
+                // Qty: Strict Whole Number
+                String qtyStr = item.getOrDefault("cantidad", "1");
+                try {
+                    qtyStr = String.valueOf((int) Double.parseDouble(qtyStr.replace(",", ".")));
+                } catch (Exception e) {}
+                canvas.drawText(qtyStr, x + 300, y, paint);
 
+                // Money: Keep .00 Decimals
                 double unit = Double.parseDouble(item.getOrDefault("precio", "0").replace(",", ""));
-                int cant = Integer.parseInt(item.getOrDefault("cantidad", "1"));
+                int cant = Integer.parseInt(qtyStr);
                 double total = unit * cant;
 
                 canvas.drawText(String.format(Locale.getDefault(), "%,.2f", unit), x + 360, y, paint);
                 canvas.drawText(String.format(Locale.getDefault(), "%,.2f", total), x + 440, y, paint);
                 y += 20;
             }
+
+            // --- FOOTER (on every page) ---
+            float footerY = 750;
+            paint.setTextSize(7f);
+            paint.setFakeBoldText(true);
+            canvas.drawText("PUNTO DE VENTA SAN PEDRO", x, footerY, paint);
+            paint.setFakeBoldText(false);
+            canvas.drawText("Calle 45E No. 51AA - 72 Tel: 888 7708 Cel: 310 469 1338", x, footerY + 10, paint);
+            
+            paint.setFakeBoldText(true);
+            canvas.drawText("PUNTO DE VENTA ENTRERRIOS", x, footerY + 25, paint);
+            paint.setFakeBoldText(false);
+            canvas.drawText("Cra. 12 No. 13-73 Tel: 867 0014 Cel: 321 759 4689", x, footerY + 35, paint);
+            
+            paint.setFakeBoldText(true);
+            canvas.drawText("PUNTO DE VENTA SANTA ROSA DE OSOS", x, footerY + 50, paint);
+            paint.setFakeBoldText(false);
+            canvas.drawText("Av. 38 No. 28-100 Interior 233 Tel 8607211 Cel: 310 483 7545", x, footerY + 60, paint);
+            // ------------------------------
 
             // Only on the LAST page: Totals and Signatures
             if (p == totalPages - 1) {
@@ -1046,13 +1130,20 @@ public class Methods {
                 canvas.drawRect(350, y, 550, y + 80, paint);
                 paint.setStyle(Paint.Style.FILL);
 
+                // Enable anti-aliasing and filtering for smooth signature rendering
+                paint.setAntiAlias(true);
+                paint.setFilterBitmap(true);
+                paint.setDither(true);
+
                 if (firmaTecnico != null) {
-                    Bitmap scaledFirmaT = Bitmap.createScaledBitmap(firmaTecnico, 180, 60, false);
-                    canvas.drawBitmap(scaledFirmaT, x + 10, y + 10, paint);
+                    android.graphics.Rect src = new android.graphics.Rect(0, 0, firmaTecnico.getWidth(), firmaTecnico.getHeight());
+                    android.graphics.RectF dst = new android.graphics.RectF(x + 5, y + 5, x + 195, y + 75);
+                    canvas.drawBitmap(firmaTecnico, src, dst, paint);
                 }
                 if (firmaCliente != null) {
-                    Bitmap scaledFirmaC = Bitmap.createScaledBitmap(firmaCliente, 180, 60, false);
-                    canvas.drawBitmap(scaledFirmaC, 360, y + 10, paint);
+                    android.graphics.Rect src = new android.graphics.Rect(0, 0, firmaCliente.getWidth(), firmaCliente.getHeight());
+                    android.graphics.RectF dst = new android.graphics.RectF(355, y + 5, 545, y + 75);
+                    canvas.drawBitmap(firmaCliente, src, dst, paint);
                 }
 
                 y += 95;

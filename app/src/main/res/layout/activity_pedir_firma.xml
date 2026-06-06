@@ -32,7 +32,10 @@
         app:layout_constraintBottom_toTopOf="@id/lly_Botones_Pedir_Firma"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:penColor="@android:color/black" />
+        app:penColor="@android:color/black"
+        app:penMinWidth="3dp"
+        app:penMaxWidth="6dp"
+        app:velocityFilterWeight="0.1" />
 
     <LinearLayout
         android:id="@+id/lly_Botones_Pedir_Firma"

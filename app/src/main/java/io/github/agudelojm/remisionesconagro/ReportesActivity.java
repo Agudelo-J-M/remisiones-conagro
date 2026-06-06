@@ -132,7 +132,14 @@ public class ReportesActivity extends AppCompatActivity {
                     JSONObject item = items.getJSONObject(i);
                     String prodId = item.getString("id").toLowerCase();
                     String prodNom = item.getString("nombre");
-                    String cant = item.getString("cantidad");
+                    String cantRaw = item.getString("cantidad");
+                    
+                    // Format quantity as whole number
+                    String cant = cantRaw;
+                    try {
+                        double v = Double.parseDouble(cantRaw.replace(",", "."));
+                        cant = String.valueOf((int) v);
+                    } catch (Exception e) { /* ignore */ }
 
                     boolean matches = false;
                     if (type == 0 && prodId.contains(finalQuery)) matches = true;
@@ -172,7 +179,14 @@ public class ReportesActivity extends AppCompatActivity {
 
                 for (int i = 0; i < items.length(); i++) {
                     JSONObject item = items.getJSONObject(i);
-                    agregarFila(consecutivo, fincaNom, item.getString("nombre"), item.getString("cantidad"), fecha);
+                    String cantRaw = item.getString("cantidad");
+                    String cant = cantRaw;
+                    try {
+                        double v = Double.parseDouble(cantRaw.replace(",", "."));
+                        cant = String.valueOf((int) v);
+                    } catch (Exception e) {}
+                    
+                    agregarFila(consecutivo, fincaNom, item.getString("nombre"), cant, fecha);
                 }
             } catch (Exception e) { e.printStackTrace(); }
         }

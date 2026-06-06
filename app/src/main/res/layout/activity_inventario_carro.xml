@@ -82,6 +82,8 @@
         android:layout_marginTop="16dp"
         android:layout_marginBottom="16dp"
         android:fillViewport="true"
+        android:scrollbarStyle="outsideOverlay"
+        android:scrollbars="vertical"
         app:layout_constraintTop_toBottomOf="@id/btn_Anadir_Inventario_Carro"
         app:layout_constraintBottom_toTopOf="@id/btn_Vaciar_Inventario_Carro"
         app:layout_constraintStart_toStartOf="parent"
@@ -99,31 +101,31 @@
                 android:padding="12dp">
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
+                    android:layout_weight="1.1"
                     android:text=" Ref"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
+                    android:layout_weight="1.8"
                     android:text=" Producto"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
+                    android:layout_weight="0.5"
                     android:gravity="start"
-                    android:text=" Cantidad"
+                    android:text=" Cant."
                     android:textStyle="bold" />
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
+                    android:layout_weight="0.7"
                     android:gravity="start"
                     android:text=" Borrar"
                     android:textStyle="bold" />
