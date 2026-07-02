@@ -56,7 +56,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
 
         // Initial warning if template is missing
         if (Methods.getInventarioWb() == null) {
-            Methods.showAlert(this, "Advertencia: No se detectó el archivo de Inventario de Bodega. Las validaciones de stock estarán deshabilitadas.").show();
+            Methods.showAlert(this, "No se ha cargado archivo de inventario de bodega. Las validaciones de stock estarán deshabilitadas.").show();
         }
     }
 

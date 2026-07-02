@@ -1,6 +1,7 @@
 package io.github.agudelojm.remisionesconagro;
 
 import android.content.Intent;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.TableLayout;
@@ -66,7 +67,9 @@ public class ModificarRemisionActivity extends AppCompatActivity {
             row.setPadding(0, 15, 0, 15); // More vertical breathing room
             row.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
-            row.addView(crearTextViewCelda(rem.get("consecutivo"), 1.2f)); // More room for 12 digits
+            String consecutivo = rem.get("consecutivo");
+
+            row.addView(crearTextViewCelda(consecutivo, 1.2f)); 
             row.addView(crearTextViewCelda(rem.get("finca_nombre"), 1.6f));
             
             String fechaStr = rem.get("fecha");
@@ -81,7 +84,7 @@ public class ModificarRemisionActivity extends AppCompatActivity {
             // Ultra-compact "Modificar" Button
             Button btnMod = new Button(this, null, androidx.appcompat.R.attr.buttonStyleSmall);
             btnMod.setText("Modificar");
-            btnMod.setPadding(10, 0, 10, 0); // Strip internal horizontal margins
+            btnMod.setPadding(10, 0, 10, 0); // Tight internal padding
             btnMod.setMinWidth(0);
             btnMod.setMinimumWidth(0);
             btnMod.setAllCaps(false); // More compact text
@@ -92,7 +95,7 @@ public class ModificarRemisionActivity extends AppCompatActivity {
             btnMod.setOnClickListener(v -> {
                 Intent intent = new Intent(this, EditarRemisionActivity.class);
                 intent.putExtra("userData", userData);
-                intent.putExtra("consecutivo", rem.get("consecutivo"));
+                intent.putExtra("consecutivo", consecutivo);
                 startActivity(intent);
             });
             row.addView(btnMod);

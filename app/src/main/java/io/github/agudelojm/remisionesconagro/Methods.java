@@ -54,6 +54,7 @@ public class Methods {
     private static final String TAG = "Methods";
     private static WeakReference<Activity> activityRef;
     private static AlertDialog alertDialog = null;
+    private static boolean isInitializing = false;
     private static final DataFormatter dataFormatter = new DataFormatter();
 
     // The main data workbook containing multiple sheets
@@ -79,13 +80,28 @@ public class Methods {
      * Initializes the application data by loading the "Datos App.xlsx" workbook and extracting sheets.
      */
     public static void initializeData(Context context) {
+        if (isInitializing) {
+            Log.d(TAG, "Initialization already in progress, skipping.");
+            return;
+        }
+        isInitializing = true;
+        
+        // Show loading using the current context
         alertDialog = showLoading(context, "Leyendo Exceles...");
         alertDialog.show();
 
         final Handler handler = new Handler(Looper.getMainLooper());
         handler.postDelayed(() -> {
+            // CRITICAL: Always use the latest activity reference to avoid crashes on recreation
+            Activity currentActivity = (activityRef != null) ? activityRef.get() : null;
+            if (currentActivity == null || currentActivity.isFinishing() || currentActivity.isDestroyed()) {
+                Log.w(TAG, "Activity context is no longer valid, aborting initialization.");
+                isInitializing = false;
+                return;
+            }
+
             try {
-                datosAppWb = loadWorkbookFromFile(context, "Datos App.xlsx");
+                datosAppWb = loadWorkbookFromFile(currentActivity, "Datos App.xlsx");
                 if (datosAppWb == null) throw new Exception("Archivo 'Datos App.xlsx' no encontrado");
 
                 // Map sheets by name as per new requirement
@@ -100,16 +116,18 @@ public class Methods {
 
                 // Load Inventory (Template for validations)
                 try {
-                    inventarioWb = loadWorkbookFromFile(context, "Inventario.xlsx");
+                    inventarioWb = loadWorkbookFromFile(currentActivity, "Inventario.xlsx");
                 } catch (Exception e) {
                     Log.w(TAG, "Inventario.xlsx could not be loaded on startup: " + e.getMessage());
                 }
 
-                if (alertDialog != null) alertDialog.dismiss();
+                if (alertDialog != null && alertDialog.isShowing()) {
+                    alertDialog.dismiss();
+                }
                 
                 // Only show final success if we aren't in a silent refresh
-                if (!(context instanceof MainActivity)) {
-                    alertDialog = showAlert(context, "Éxito leyendo Exceles");
+                if (!(currentActivity instanceof MainActivity)) {
+                    alertDialog = showAlert(currentActivity, "Éxito leyendo Exceles");
                     if (inventarioWb == null) {
                         alertDialog.setMessage("Éxito leyendo Base de Datos. Nota: No se encontró 'Inventario.xlsx', las validaciones de stock estarán deshabilitadas.");
                     }
@@ -117,14 +135,18 @@ public class Methods {
                 }
                 
                 // Perform cleanup of old referrals
-                cleanOldRemisiones(context);
+                cleanOldRemisiones(currentActivity);
 
             } catch (Exception e) {
                 Log.e(TAG, "Error initializing data: " + e.getMessage());
-                if (alertDialog != null) alertDialog.dismiss();
+                if (alertDialog != null && alertDialog.isShowing()) {
+                    alertDialog.dismiss();
+                }
                 
                 String errorMsg = "Error: " + e.getMessage() + ". Por favor, abra el archivo desde su correo usando esta aplicación.";
-                showFatalError(context, errorMsg);
+                showFatalError(currentActivity, errorMsg);
+            } finally {
+                isInitializing = false;
             }
         }, 1250);
     }
@@ -446,7 +468,7 @@ public class Methods {
      * Searches for an item in the Inventory Workbook and returns its stock (saldo).
      * Returns -1.0 if the item is not found or sheet is invalid.
      */
-    public static double getInventarioSaldo(String idOrName) {
+    public static synchronized double getInventarioSaldo(String idOrName) {
         if (inventarioWb == null) return -1.0;
         try {
             Sheet sheet = inventarioWb.getSheet("Inventario");
@@ -491,39 +513,47 @@ public class Methods {
 
     /**
      * Returns a list of maintenance service descriptions.
+     * Uses a LinkedHashSet to remove duplicates while preserving order.
      */
     public static List<String> getListaMantenimientos() {
-        List<String> list = new ArrayList<>();
-        if (tarifasMantenimientoSheet == null) return list;
+        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+        if (tarifasMantenimientoSheet == null) return new ArrayList<>();
         int idxDesc = getColumnIndex(tarifasMantenimientoSheet, "descripcion");
-        if (idxDesc == -1) return list;
+        if (idxDesc == -1) return new ArrayList<>();
 
         for (Row row : tarifasMantenimientoSheet) {
             if (row.getRowNum() == 0) continue;
-            list.add(dataFormatter.formatCellValue(row.getCell(idxDesc)));
+            String desc = dataFormatter.formatCellValue(row.getCell(idxDesc));
+            if (!desc.isEmpty()) {
+                set.add(desc);
+            }
         }
-        return list;
+        return new ArrayList<>(set);
     }
 
     /**
-     * Searches for a product by its query string (ID or Name).
+     * Consolidated search for products and maintenance services.
      */
-    public static Map<String, String> buscarProducto(String query) {
-        if (productosSheet == null) return null;
-        int idxRef = getColumnIndex(productosSheet, "referencia");
-        int idxNombre = getColumnIndex(productosSheet, "nombre");
-        int idxPrecio = getColumnIndex(productosSheet, "precio_base");
-        if (idxRef == -1 || idxNombre == -1) return null;
+    public static Map<String, String> buscarItem(String query, boolean isService) {
+        Sheet sheet = isService ? tarifasMantenimientoSheet : productosSheet;
+        if (sheet == null) return null;
+
+        int idxRef = getColumnIndex(sheet, "referencia");
+        int idxNom = getColumnIndex(sheet, isService ? "descripcion" : "nombre");
+        int idxPrecio = getColumnIndex(sheet, "precio_base");
+
+        if (idxRef == -1 || idxNom == -1) return null;
 
         // Clean query if it came from autocomplete "Ref - Name"
-        String referencia = query.split(" - ")[0].trim();
+        String reference = query.split(" - ")[0].trim();
 
-        for (Row row : productosSheet) {
+        for (Row row : sheet) {
             if (row.getRowNum() == 0) continue;
-            if (referencia.equalsIgnoreCase(dataFormatter.formatCellValue(row.getCell(idxRef)))) {
+            String fileRef = dataFormatter.formatCellValue(row.getCell(idxRef));
+            if (reference.equalsIgnoreCase(fileRef)) {
                 Map<String, String> map = new HashMap<>();
-                map.put("id", referencia);
-                map.put("nombre", dataFormatter.formatCellValue(row.getCell(idxNombre)));
+                map.put("id", fileRef);
+                map.put("nombre", dataFormatter.formatCellValue(row.getCell(idxNom)));
                 map.put("precio", idxPrecio != -1 ? dataFormatter.formatCellValue(row.getCell(idxPrecio)) : "0");
                 return map;
             }
@@ -532,26 +562,44 @@ public class Methods {
     }
 
     /**
+     * Searches for a product by its query string (ID or Name).
+     */
+    public static Map<String, String> buscarProducto(String query) {
+        return buscarItem(query, false);
+    }
+
+    /**
      * Searches for a maintenance service by description.
+     * Returns unified keys: "id", "nombre", "precio" to match products.
      */
     public static Map<String, String> buscarMantenimiento(String desc) {
-        if (tarifasMantenimientoSheet == null) return null;
-        int idxRef = getColumnIndex(tarifasMantenimientoSheet, "referencia");
-        int idxDesc = getColumnIndex(tarifasMantenimientoSheet, "descripcion");
-        int idxPrecio = getColumnIndex(tarifasMantenimientoSheet, "precio_base");
-        if (idxRef == -1 || idxDesc == -1) return null;
+        return buscarItem(desc, true);
+    }
 
-        for (Row row : tarifasMantenimientoSheet) {
-            if (row.getRowNum() == 0) continue;
-            if (desc.equalsIgnoreCase(dataFormatter.formatCellValue(row.getCell(idxDesc)))) {
-                Map<String, String> map = new HashMap<>();
-                map.put("referencia", dataFormatter.formatCellValue(row.getCell(idxRef)));
-                map.put("descripcion", desc);
-                map.put("precio_base", dataFormatter.formatCellValue(row.getCell(idxPrecio)));
-                return map;
+    /**
+     * Saves remission metadata, items, and optional client data to a JSON file.
+     */
+    public static synchronized void saveDraftRemision(Context context, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tempClientData) {
+        try {
+            JSONObject json = new JSONObject();
+            if (fincaData != null) json.put("fincaData", new JSONObject(fincaData));
+            if (tempClientData != null) json.put("tempClientData", new JSONObject(tempClientData));
+            
+            org.json.JSONArray itemsArray = new org.json.JSONArray();
+            if (items != null) {
+                for (Map<String, String> item : items) {
+                    itemsArray.put(new JSONObject(item));
+                }
             }
+            json.put("items", itemsArray);
+            
+            File file = new File(context.getFilesDir(), "remision_draft.json");
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(json.toString().getBytes("UTF-8"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving draft", e);
         }
-        return null;
     }
 
     /**
@@ -635,14 +683,22 @@ public class Methods {
             return null;
         }
 
+        // Feature: Standardize ID to 2-digits (3 -> 03, 105 -> 105)
+        String prefix = tecnicoNumero;
+        try {
+            prefix = String.format(Locale.getDefault(), "%02d", Integer.parseInt(tecnicoNumero));
+        } catch (Exception e) {
+            Log.e(TAG, "Error formatting técnico ID", e);
+        }
+
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             // Hardcoded custom epoch             
             OffsetDateTime customEpoch = OffsetDateTime.of(2026, 5, 14, 0, 0, 0, 0, ZoneOffset.UTC);
             Instant now = Instant.now();
             long minutesSinceCustomEpoch = ChronoUnit.MINUTES.between(customEpoch.toInstant(), now);
-            return tecnicoNumero + minutesSinceCustomEpoch;
+            return prefix + minutesSinceCustomEpoch;
         } else {
-            return tecnicoNumero + (System.currentTimeMillis() / 60000);
+            return prefix + (System.currentTimeMillis() / 60000);
         }
     }
 
@@ -688,6 +744,9 @@ public class Methods {
         }
     }
 
+    /**
+     * Saves remission metadata and items to a JSON file.
+     */
     public static synchronized void saveRemisionData(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, boolean restored) {
         try {
             JSONObject json = new JSONObject();
@@ -827,11 +886,16 @@ public class Methods {
 
     /**
      * Adds items back to stock (used during modification).
+     * Now supports adding even if item doesn't exist in warehouse (creates a new row).
      */
     public static synchronized void restaurarStock(Context context, List<Map<String, String>> items) {
+        /* Reenable later if strictly needed
         // 1. Restore to Car Inventory
         HashMap<String, Integer> carInv = getCarInventory(context);
         for (Map<String, String> item : items) {
+            // SKIP maintenance items
+            if ("mantenimiento".equals(item.get("tipo"))) continue;
+
             String ref = item.get("id");
             if (ref == null || ref.isEmpty()) continue;
             
@@ -843,13 +907,10 @@ public class Methods {
             carInv.put(ref, (current != null ? current : 0) + qty);
         }
         saveCarInventory(context, carInv);
+        */
 
-        // 2. Restore to Warehouse Inventory (only if item exists there)
-        try {
-            if (inventarioWb == null) loadInventarioWb(context);
-        } catch (Exception e) {
-            Log.e(TAG, "Error loading inventory for restoration", e);
-        }
+        // 2. Restore to Warehouse Inventory (Inventario.xlsx)
+        if (inventarioWb == null) loadInventarioWb(context);
         
         if (inventarioWb != null) {
             try {
@@ -858,16 +919,22 @@ public class Methods {
 
                 int idxRef = getColumnIndex(sheet, "referencia");
                 int idxSaldo = getColumnIndex(sheet, "saldo");
+                int idxNombre = getColumnIndex(sheet, "nombre");
                 if (idxRef == -1 || idxSaldo == -1) return;
 
                 boolean modified = false;
                 for (Map<String, String> item : items) {
+                    // SKIP maintenance items
+                    if ("mantenimiento".equals(item.get("tipo"))) continue;
+
                     String refToRestore = item.get("id");
                     String qtyStr = item.get("cantidad");
+                    String nameToRestore = item.get("nombre");
                     if (refToRestore == null || qtyStr == null) continue;
                     
                     int qtyToRestore = Integer.parseInt(qtyStr);
 
+                    boolean found = false;
                     for (Row row : sheet) {
                         if (row.getRowNum() == 0) continue;
                         String refFile = dataFormatter.formatCellValue(row.getCell(idxRef));
@@ -878,10 +945,31 @@ public class Methods {
                                 String val = dataFormatter.formatCellValue(saldoCell).replace(",", ".");
                                 if (!val.isEmpty()) currentSaldo = Double.parseDouble(val);
                             } catch (Exception e) {}
-                            saldoCell.setCellValue(currentSaldo + qtyToRestore);
+                            
+                            double nuevoSaldo = currentSaldo + qtyToRestore;
+                            if (nuevoSaldo == 0) {
+                                int rowNum = row.getRowNum();
+                                sheet.removeRow(row);
+                                if (rowNum < sheet.getLastRowNum()) {
+                                    sheet.shiftRows(rowNum + 1, sheet.getLastRowNum(), -1);
+                                }
+                            } else {
+                                saldoCell.setCellValue(nuevoSaldo);
+                            }
+                            found = true;
                             modified = true;
                             break;
                         }
+                    }
+
+                    if (!found) {
+                        // Create new row for previously unknown item
+                        int lastRowNum = sheet.getLastRowNum();
+                        Row newRow = sheet.createRow(lastRowNum + 1);
+                        newRow.createCell(idxRef).setCellValue(refToRestore);
+                        if (idxNombre != -1) newRow.createCell(idxNombre).setCellValue(nameToRestore);
+                        newRow.createCell(idxSaldo).setCellValue(qtyToRestore);
+                        modified = true;
                     }
                 }
                 if (modified) saveWorkbook(context, inventarioWb, "Inventario.xlsx");
@@ -893,6 +981,7 @@ public class Methods {
 
     /**
      * Deducts quantities from the warehouse inventory (Inventario.xlsx).
+     * Now supports negative stock if item doesn't exist or balance is insufficient.
      */
     public static synchronized void updateWarehouseStock(Context context, List<Map<String, String>> items) {
         if (inventarioWb == null) loadInventarioWb(context);
@@ -903,12 +992,17 @@ public class Methods {
 
             int idxRef = getColumnIndex(sheet, "referencia");
             int idxSaldo = getColumnIndex(sheet, "saldo");
+            int idxNombre = getColumnIndex(sheet, "nombre");
 
             if (idxRef == -1 || idxSaldo == -1) return;
 
             boolean modified = false;
             for (Map<String, String> item : items) {
+                // SKIP maintenance items
+                if ("mantenimiento".equals(item.get("tipo"))) continue;
+
                 String refToDeduct = item.get("id");
+                String nameToDeduct = item.get("nombre");
                 if (refToDeduct == null || refToDeduct.isEmpty()) continue;
                 
                 int qtyToDeduct;
@@ -916,6 +1010,7 @@ public class Methods {
                     qtyToDeduct = Integer.parseInt(item.get("cantidad"));
                 } catch (Exception e) { continue; }
 
+                boolean found = false;
                 for (Row row : sheet) {
                     if (row.getRowNum() == 0) continue;
                     String refFile = dataFormatter.formatCellValue(row.getCell(idxRef));
@@ -927,10 +1022,30 @@ public class Methods {
                             if (!val.isEmpty()) currentSaldo = Double.parseDouble(val);
                         } catch (Exception e) { }
                         
-                        saldoCell.setCellValue(currentSaldo - qtyToDeduct);
+                        double nuevoSaldo = currentSaldo - qtyToDeduct;
+                        if (nuevoSaldo == 0) {
+                            int rowNum = row.getRowNum();
+                            sheet.removeRow(row);
+                            if (rowNum < sheet.getLastRowNum()) {
+                                sheet.shiftRows(rowNum + 1, sheet.getLastRowNum(), -1);
+                            }
+                        } else {
+                            saldoCell.setCellValue(nuevoSaldo);
+                        }
+                        found = true;
                         modified = true;
                         break;
                     }
+                }
+
+                if (!found) {
+                    // Create new row with negative stock for previously unknown item
+                    int lastRowNum = sheet.getLastRowNum();
+                    Row newRow = sheet.createRow(lastRowNum + 1);
+                    newRow.createCell(idxRef).setCellValue(refToDeduct);
+                    if (idxNombre != -1) newRow.createCell(idxNombre).setCellValue(nameToDeduct);
+                    newRow.createCell(idxSaldo).setCellValue(-qtyToDeduct);
+                    modified = true;
                 }
             }
 
@@ -946,9 +1061,13 @@ public class Methods {
      * Deducts quantities from the car inventory (InventarioCarro.json).
      */
     public static synchronized void updateCarStock(Context context, List<Map<String, String>> items) {
+        /* Reenable later if strictly needed
         HashMap<String, Integer> carInv = getCarInventory(context);
         boolean modified = false;
         for (Map<String, String> item : items) {
+            // SKIP maintenance items
+            if ("mantenimiento".equals(item.get("tipo"))) continue;
+
             String ref = item.get("id");
             if (ref == null) continue;
             
@@ -971,6 +1090,7 @@ public class Methods {
         if (modified) {
             saveCarInventory(context, carInv);
         }
+        */
     }
 
     private static int getColumnIndex(Sheet sheet, String colName) {
@@ -1004,7 +1124,7 @@ public class Methods {
         }
     }
 
-    public static synchronized File generarPDFRemision(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, Bitmap firmaTecnico, Bitmap firmaCliente) {
+    public static synchronized File generarPDFRemision(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, Bitmap firmaTecnico, Bitmap firmaCliente, String observaciones) {
         PdfDocument document = new PdfDocument();
         int itemsPerPage = 10;
         int totalItems = items.size();
@@ -1149,6 +1269,53 @@ public class Methods {
                 y += 95;
                 canvas.drawText("FIRMA TECNICO", x, y, paint);
                 canvas.drawText("FIRMA CLIENTE", 350, y, paint);
+
+                // --- OBSERVACIONES Field ---
+                y += 20;
+                paint.setFakeBoldText(true);
+                canvas.drawText("OBSERVACIONES:", x, y, paint);
+                paint.setFakeBoldText(false);
+                
+                y += 5;
+                paint.setStyle(Paint.Style.STROKE);
+                canvas.drawRect(x, y, 550, y + 40, paint); // Observaciones Box
+                paint.setStyle(Paint.Style.FILL);
+                
+                String obsText = (observaciones != null && !observaciones.isEmpty()) ? observaciones : "Sin observaciones";
+                
+                // Optimized Word-Aware Wrapping
+                List<String> wrappedLines = new ArrayList<>();
+                String[] rawParagraphs = obsText.split("\n");
+                Paint textPaint = new Paint(paint);
+                textPaint.setTextSize(7f); // Ensure consistent size for calculation
+                float maxWidth = 530; // Box width (550 - margins)
+
+                for (String para : rawParagraphs) {
+                    if (para.isEmpty()) {
+                        wrappedLines.add("");
+                        continue;
+                    }
+                    String[] words = para.split(" ");
+                    StringBuilder currentLine = new StringBuilder();
+                    for (String word : words) {
+                        String testLine = currentLine.length() == 0 ? word : currentLine + " " + word;
+                        if (textPaint.measureText(testLine) <= maxWidth) {
+                            currentLine.append(currentLine.length() == 0 ? "" : " ").append(word);
+                        } else {
+                            wrappedLines.add(currentLine.toString());
+                            currentLine = new StringBuilder(word);
+                        }
+                    }
+                    if (currentLine.length() > 0) wrappedLines.add(currentLine.toString());
+                }
+
+                float currentY = y + 15;
+                for (String line : wrappedLines) {
+                    if (currentY > y + 35) break; // Hard limit for observations box height
+                    canvas.drawText(line, x + 5, currentY, paint);
+                    currentY += 12;
+                }
+                // ---------------------------
             }
 
             document.finishPage(page);

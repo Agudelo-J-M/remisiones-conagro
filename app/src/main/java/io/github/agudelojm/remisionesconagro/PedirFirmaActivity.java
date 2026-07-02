@@ -205,7 +205,9 @@ public class PedirFirmaActivity extends AppCompatActivity {
                     if (signatureFile.exists()) signatureFile.delete();
                     if (tempFile.exists()) tempFile.delete();
                     
+                    /* Reenable later if strictly needed
                     Methods.saveCarInventory(this, new HashMap<>());
+                    */
                     Methods.setInventarioWbToNull(); // Force reload next time
 
                     // Close activity immediately after confirmation

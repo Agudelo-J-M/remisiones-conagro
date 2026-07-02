@@ -58,9 +58,7 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Rechazo de Inventario - " + 
                 (userData != null ? userData.getOrDefault("nombre", "") : ""));
         
-        ArrayList<CharSequence> text = new ArrayList<>();
-        text.add("Motivo de rechazo: " + motivo);
-        emailIntent.putCharSequenceArrayListExtra(Intent.EXTRA_TEXT, text);
+        emailIntent.putExtra(Intent.EXTRA_TEXT, "Motivo de rechazo: " + motivo);
 
         File tempFile = new File(getFilesDir(), "Inventario_Temp.xlsx");
         File definitiveFile = new File(getFilesDir(), "Inventario.xlsx");

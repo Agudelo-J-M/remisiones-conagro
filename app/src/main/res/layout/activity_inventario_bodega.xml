@@ -33,41 +33,18 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <TableLayout
-            android:id="@+id/tly_TablaDatos_Inventario_Bodega"
+        <HorizontalScrollView
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:stretchColumns="*">
+            android:layout_height="wrap_content">
 
-            <TableRow
-                android:layout_width="match_parent"
-                android:background="#DDDDDD"
-                android:padding="12dp">
+            <TableLayout
+                android:id="@+id/tly_TablaDatos_Inventario_Bodega"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content">
+                <!-- Header populated programmatically to adapt to view mode -->
+            </TableLayout>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text=" ID"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text=" Producto"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:gravity="start"
-                    android:text=" Cantidad"
-                    android:textStyle="bold" />
-
-            </TableRow>
-        </TableLayout>
+        </HorizontalScrollView>
     </ScrollView>
 
     <LinearLayout

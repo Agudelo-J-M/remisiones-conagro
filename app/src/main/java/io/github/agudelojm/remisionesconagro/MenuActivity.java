@@ -78,11 +78,13 @@ public class MenuActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        /* Reenable later if needed
         findViewById(R.id.btn_InventarioCarro).setOnClickListener(v -> {
             Intent intent = new Intent(this, InventarioCarroActivity.class);
             intent.putExtra("userData", userData);
             startActivity(intent);
         });
+        */
 
         findViewById(R.id.btn_InventarioBodega).setOnClickListener(v -> {
             Intent intent = new Intent(this, InventarioBodegaActivity.class);

@@ -53,6 +53,17 @@ public class EditarRemisionActivity extends AppCompatActivity {
     private Map<String, String> fincaActual;
     private HashMap<String, String> userData;
     private String consecutivo = "";
+    private String currentObservaciones = "Sin observaciones";
+
+    private final ActivityResultLauncher<Intent> observacionesLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    currentObservaciones = result.getData().getStringExtra("observaciones");
+                    pedirFirmaTecnico();
+                }
+            }
+    );
 
     private final ActivityResultLauncher<Intent> signatureLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
@@ -178,7 +189,8 @@ public class EditarRemisionActivity extends AppCompatActivity {
                         itemJson.getString("id"),
                         itemJson.getString("nombre"),
                         itemJson.getString("cantidad"),
-                        itemJson.getString("precio")
+                        itemJson.getString("precio"),
+                        itemJson.optString("tipo", "producto")
                 );
                 itemsAgregados.add(item);
                 
@@ -186,6 +198,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
                 Map<String, String> original = new HashMap<>();
                 original.put("id", item.id);
                 original.put("cantidad", item.cantidad);
+                original.put("tipo", item.tipo);
                 itemsOriginales.add(original);
             }
             
@@ -206,6 +219,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
             m.put("nombre", item.nombre);
             m.put("cantidad", item.cantidad);
             m.put("precio", item.precio);
+            m.put("tipo", item.tipo);
             list.add(m);
         }
         return list;
@@ -244,6 +258,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
             nombre = prod.get("nombre");
             precio = prod.get("precio");
             
+            /* Reenable later if strictly needed
             // Rule: VIRTUAL STOCK Logic
             // available = (Physical Car Stock) + (Original items in THIS remission)
             HashMap<String, Integer> carInv = Methods.getCarInventory(this);
@@ -274,19 +289,28 @@ public class EditarRemisionActivity extends AppCompatActivity {
                 Methods.showAlert(this, "Error: La cantidad (" + (alreadyInEditList + qtyToAdd) + ") supera el inventario disponible (Stock: " + currentInCar + " + Remisión Original: " + quantityInOriginalRemission + ")").show();
                 return;
             }
+            */
         } else {
             String selection = (String) spnMantenimiento.getSelectedItem();
             Map<String, String> mant = Methods.buscarMantenimiento(selection);
             if (mant == null) return;
-            id = mant.get("referencia");
-            nombre = mant.get("descripcion");
-            precio = mant.get("precio_base");
+            id = mant.get("id");
+            nombre = mant.get("nombre");
+            precio = mant.get("precio");
         }
 
         // Sum quantities if item already exists
         boolean exists = false;
+        String currentTipo = rbtProducto.isChecked() ? "producto" : "mantenimiento";
         for (IngresarRemisionActivity.ItemRemision existing : itemsAgregados) {
-            if (existing.id.equalsIgnoreCase(id)) {
+            boolean isSame = false;
+            if ("producto".equals(currentTipo)) {
+                isSame = "producto".equals(existing.tipo) && existing.id.equalsIgnoreCase(id);
+            } else {
+                isSame = "mantenimiento".equals(existing.tipo) && existing.nombre.equalsIgnoreCase(nombre);
+            }
+
+            if (isSame) {
                 int currentQty = Integer.parseInt(existing.cantidad);
                 existing.cantidad = String.valueOf(currentQty + qtyToAdd);
                 exists = true;
@@ -295,10 +319,11 @@ public class EditarRemisionActivity extends AppCompatActivity {
         }
 
         if (!exists) {
-            itemsAgregados.add(new IngresarRemisionActivity.ItemRemision(id, nombre, cantidadStr, precio));
+            itemsAgregados.add(new IngresarRemisionActivity.ItemRemision(id, nombre, cantidadStr, precio, currentTipo));
         }
 
         actualizarTabla();
+        saveDraft();
         edtProductoRef.setText("");
         tvwNombreProducto.setText("");
         edtCantidad.setText("1");
@@ -335,6 +360,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
             btnDelete.setOnClickListener(v -> {
                 itemsAgregados.remove(finalI);
                 actualizarTabla();
+                saveDraft();
             });
             row.addView(btnDelete);
             
@@ -373,7 +399,10 @@ public class EditarRemisionActivity extends AppCompatActivity {
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Recordatorio")
                 .setMessage("No olvide ingresar el correo de la oficina para enviar esta remisión.")
-                .setPositiveButton("Entendido", (dialog, which) -> pedirFirmaTecnico())
+                .setPositiveButton("Entendido", (dialog, which) -> {
+                    Intent intent = new Intent(this, ObservacionesActivity.class);
+                    observacionesLauncher.launch(intent);
+                })
                 .show();
     }
 
@@ -403,7 +432,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
         Bitmap bT = BitmapFactory.decodeFile(fileT.getAbsolutePath());
         Bitmap bC = BitmapFactory.decodeFile(fileC.getAbsolutePath());
 
-        File pdfFile = Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bT, bC);
+        File pdfFile = Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bT, bC, currentObservaciones);
         
         if (pdfFile != null && pdfFile.exists()) {
             enviarRemisionPorEmail(pdfFile, fileT, fileC, pdfItems);
@@ -437,7 +466,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
                     
                     // 2. DEDUCT NEW STOCK (Physically)
                     Methods.updateWarehouseStock(this, pdfItems);
-                    Methods.updateCarStock(this, pdfItems);
+                    // Methods.updateCarStock(this, pdfItems); // Temporarily disabled
 
                     // 3. SECURE DELETION of signatures and PDF
                     if (t.exists()) t.delete();
@@ -458,5 +487,9 @@ public class EditarRemisionActivity extends AppCompatActivity {
                 })
                 .setCancelable(false)
                 .show();
+    }
+    private void saveDraft() {
+        List<Map<String, String>> mappedItems = itemsToMap(itemsAgregados);
+        Methods.saveDraftRemision(this, fincaActual, mappedItems, null);
     }
 }

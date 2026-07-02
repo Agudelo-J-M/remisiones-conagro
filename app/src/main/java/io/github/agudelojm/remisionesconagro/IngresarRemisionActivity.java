@@ -51,6 +51,27 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     private HashMap<String, String> userData;
     private String tecnicoNumero = "";
     private String consecutivo = "";
+    private String currentObservaciones = "Sin observaciones";
+
+    private final ActivityResultLauncher<Intent> clientDataLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    currentObservaciones = result.getData().getStringExtra("observaciones");
+                    pedirFirmaTecnico();
+                }
+            }
+    );
+
+    private final ActivityResultLauncher<Intent> observacionesLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    currentObservaciones = result.getData().getStringExtra("observaciones");
+                    pedirFirmaTecnico();
+                }
+            }
+    );
 
     private final ActivityResultLauncher<Intent> signatureLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
@@ -117,7 +138,8 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                             itemJson.getString("id"),
                             itemJson.getString("nombre"),
                             itemJson.getString("cantidad"),
-                            itemJson.getString("precio")
+                            itemJson.getString("precio"),
+                            itemJson.optString("tipo", "producto")
                     ));
                 }
                 actualizarTabla();
@@ -135,9 +157,10 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             m.put("nombre", item.nombre);
             m.put("cantidad", item.cantidad);
             m.put("precio", item.precio);
+            m.put("tipo", item.tipo);
             mappedItems.add(m);
         }
-        Methods.saveDraftRemision(this, fincaActual, mappedItems);
+        Methods.saveDraftRemision(this, fincaActual, mappedItems, null);
     }
 
     private void initViews() {
@@ -281,34 +304,22 @@ public class IngresarRemisionActivity extends AppCompatActivity {
 
         if (itemData != null) {
             String id = itemData.get("id");
-            if (rbtProducto.isChecked()) {
-                HashMap<String, Integer> carInv = Methods.getCarInventory(this);
-                int currentInCar = carInv.getOrDefault(id, 0);
-                
-                // Rule 1: No adding if total exceeds Car Inventory
-                if (currentInCar == 0) {
-                    Methods.showAlert(this, "Error: El producto no se encuentra en el inventario del carro.").show();
-                    return;
-                }
-                
-                // Calculate how much is already in the list
-                int alreadyInList = 0;
-                for (ItemRemision existing : itemsAgregados) {
-                    if (existing.id.equalsIgnoreCase(id)) {
-                        alreadyInList += Integer.parseInt(existing.cantidad);
-                    }
-                }
-
-                if (alreadyInList + qtyToAdd > currentInCar) {
-                    Methods.showAlert(this, "Error: La cantidad (" + (alreadyInList + qtyToAdd) + ") supera el inventario en carro (" + currentInCar + ")").show();
-                    return;
-                }
-            }
+            /* Reenable later if strictly needed ... */
 
             // Rule 2: Sum quantities if item already exists in the list
             boolean exists = false;
+            String currentTipo = rbtProducto.isChecked() ? "producto" : "mantenimiento";
             for (ItemRemision existing : itemsAgregados) {
-                if (existing.id.equalsIgnoreCase(id)) {
+                boolean isSame;
+                if ("producto".equals(currentTipo)) {
+                    // Products: Unique by ID (Reference)
+                    isSame = "producto".equals(existing.tipo) && existing.id.equalsIgnoreCase(id);
+                } else {
+                    // Maintenance: Unique by Name (Description) because Referencias repeat
+                    isSame = "mantenimiento".equals(existing.tipo) && existing.nombre.equalsIgnoreCase(itemData.get("nombre"));
+                }
+
+                if (isSame) {
                     int currentQty = Integer.parseInt(existing.cantidad);
                     existing.cantidad = String.valueOf(currentQty + qtyToAdd);
                     exists = true;
@@ -321,7 +332,8 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                         id,
                         itemData.get("nombre"),
                         cantidadStr,
-                        itemData.get("precio")
+                        itemData.get("precio"),
+                        currentTipo
                 ));
             }
 
@@ -388,9 +400,22 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     }
 
     private void finalizarRemision() {
-        if (fincaActual == null || itemsAgregados.isEmpty()) {
-            Methods.showAlert(this, "Complete los datos y agregue items antes de finalizar").show();
+        if (itemsAgregados.isEmpty()) {
+            Methods.showAlert(this, "Agregue items antes de finalizar").show();
             return;
+        }
+
+        // Feature 6: Support for Placeholder Client (Anonymous Remission)
+        if (fincaActual == null) {
+            fincaActual = new HashMap<>();
+            fincaActual.put("finca_nombre", "CLIENTE POR DEFINIR");
+            fincaActual.put("finca_id", "000");
+            fincaActual.put("direccion", "N/A");
+            fincaActual.put("ciu", "N/A");
+            fincaActual.put("persona_nombre", "POR DEFINIR");
+            fincaActual.put("persona_telefono", "N/A");
+            fincaActual.put("persona_email", "");
+            Log.d("Remision", "Using placeholder client data");
         }
 
         // Feature: Validate Email and Show Office Reminder
@@ -410,7 +435,17 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Recordatorio")
                 .setMessage("No olvide ingresar el correo de la oficina para enviar esta remisión.")
-                .setPositiveButton("Entendido", (dialog, which) -> pedirFirmaTecnico())
+                .setPositiveButton("Entendido", (dialog, which) -> {
+                    if (fincaActual == null) {
+                        // NEW CLIENT FLOW
+                        Intent intent = new Intent(this, IngresarDatosClienteActivity.class);
+                        clientDataLauncher.launch(intent);
+                    } else {
+                        // EXISTING CLIENT FLOW
+                        Intent intent = new Intent(this, ObservacionesActivity.class);
+                        observacionesLauncher.launch(intent);
+                    }
+                })
                 .show();
     }
 
@@ -438,6 +473,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             m.put("nombre", item.nombre);
             m.put("cantidad", item.cantidad);
             m.put("precio", item.precio);
+            m.put("tipo", item.tipo); // CRITICAL: Propagate type to filtering logic
             pdfItems.add(m);
         }
 
@@ -447,12 +483,12 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         Bitmap bTecnico = BitmapFactory.decodeFile(fileT.getAbsolutePath());
         Bitmap bCliente = BitmapFactory.decodeFile(fileC.getAbsolutePath());
 
-        File pdfFile = Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bTecnico, bCliente);
+        File pdfFile = Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bTecnico, bCliente, currentObservaciones);
         
         if (pdfFile != null && pdfFile.exists()) {
             // Deduct from inventories
             Methods.updateWarehouseStock(this, pdfItems);
-            Methods.updateCarStock(this, pdfItems);
+            // Methods.updateCarStock(this, pdfItems); // Temporarily disabled
 
             enviarRemisionPorEmail(pdfFile, fileT, fileC, pdfItems);
         } else {
@@ -489,7 +525,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                     if (sigC.exists()) sigC.delete();
                     if (pdfFile.exists()) pdfFile.delete();
                     
-                    // SAVE Metadata for future editing ONLY on SUCCESS
+                    // SAVE Metadata
                     Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
                     
                     // FLUSH DRAFT and local state
@@ -505,8 +541,6 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                     if (sigC.exists()) sigC.delete();
                     if (pdfFile.exists()) pdfFile.delete();
                     
-                    // CLEAR the Pad in the Background logic already handled,
-                    // but we ensure the activity is refreshed for a clean retry.
                     actualizarTabla(); 
 
                     // We DO NOT save the metadata and DO NOT delete the draft.
@@ -518,12 +552,13 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     }
 
     public static class ItemRemision {
-        public String id, nombre, cantidad, precio;
-        public ItemRemision(String id, String nombre, String cantidad, String precio) {
+        public String id, nombre, cantidad, precio, tipo;
+        public ItemRemision(String id, String nombre, String cantidad, String precio, String tipo) {
             this.id = id;
             this.nombre = nombre;
             this.cantidad = cantidad;
             this.precio = precio;
+            this.tipo = tipo;
         }
     }
 }

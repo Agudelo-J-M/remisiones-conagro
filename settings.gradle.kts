@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Remisiones Coonagro"
+rootProject.name = "Remisiones Conagro"
 include(":app")
