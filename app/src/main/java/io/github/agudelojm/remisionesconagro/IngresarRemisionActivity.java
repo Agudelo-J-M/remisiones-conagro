@@ -58,6 +58,10 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     private static final String PLACEHOLDER_FINCA_NOMBRE = "CLIENTE POR DEFINIR";
     private boolean isAnonymousRemision = false;
 
+    // Consecutivo is assigned at commit time, so signatures are captured under a fixed draft key
+    // (no number exists yet). See docs/feature-consecutivo-remision.md.
+    private static final String SIGNATURE_DRAFT_KEY = "DRAFT";
+
     private final ActivityResultLauncher<Intent> clientDataLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
@@ -104,16 +108,29 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             tecnicoNumero = userData.getOrDefault("numero", "");
         }
 
-        // Generate and validate consecutivo
-        consecutivo = Methods.generarConsecutivo(this, tecnicoNumero);
+        // Fresh-install gate: block remisiones until the consecutivo counter is configured.
+        if (!Methods.isConsecutivoInicializado(this, tecnicoNumero)) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("Consecutivo no configurado")
+                    .setMessage("Debe configurar el número de consecutivo antes de crear remisiones.")
+                    .setCancelable(false)
+                    .setPositiveButton("Configurar", (d, w) -> {
+                        Intent intent = new Intent(this, CambiarConsecutivoActivity.class);
+                        intent.putExtra("userData", userData);
+                        startActivity(intent);
+                        finish();
+                    })
+                    .show();
+            return;
+        }
 
         initViews();
         setupListeners();
         loadMantenimientos();
 
-        if (consecutivo != null && !consecutivo.isEmpty()) {
-            tvwTitulo.setText(getString(R.string.ingresar_remisi_n) + " - " + consecutivo);
-        }
+        // Consecutivo is assigned at commit time (see ejecutarGeneracionPDF), not on screen open,
+        // so an abandoned remisión never burns a number. Until then this is only a draft.
+        tvwTitulo.setText(getString(R.string.ingresar_remisi_n) + " (Borrador)");
 
         // Feature 1: Load draft if exists
         loadDraft();
@@ -469,7 +486,8 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         Intent intent = new Intent(this, PedirFirmaActivity.class);
         intent.putExtra("flowType", "remision_tecnico");
         intent.putExtra("userData", userData);
-        intent.putExtra("consecutivo", consecutivo);
+        // No consecutivo yet (assigned at commit); capture under the fixed draft key.
+        intent.putExtra("consecutivo", SIGNATURE_DRAFT_KEY);
         signatureLauncher.launch(intent);
     }
 
@@ -477,11 +495,24 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         Intent intent = new Intent(this, PedirFirmaActivity.class);
         intent.putExtra("flowType", "remision_cliente");
         intent.putExtra("userData", userData);
-        intent.putExtra("consecutivo", consecutivo);
+        // No consecutivo yet (assigned at commit); capture under the fixed draft key.
+        intent.putExtra("consecutivo", SIGNATURE_DRAFT_KEY);
         signatureLauncher.launch(intent);
     }
 
     private void ejecutarGeneracionPDF() {
+        // Peek the next consecutivo at commit time (not consumed until the send is confirmed).
+        // A missing técnico número is fatal (peekProximoConsecutivo closes the app).
+        consecutivo = Methods.peekProximoConsecutivo(this, tecnicoNumero);
+        if (consecutivo == null || consecutivo.isEmpty()) {
+            // Fatal error already surfaced; clean up draft signatures on the way out.
+            File dT = new File(getFilesDir(), "firma_tecnico_" + SIGNATURE_DRAFT_KEY + ".png");
+            File dC = new File(getFilesDir(), "firma_cliente_" + SIGNATURE_DRAFT_KEY + ".png");
+            if (dT.exists()) dT.delete();
+            if (dC.exists()) dC.delete();
+            return;
+        }
+
         List<Map<String, String>> pdfItems = new ArrayList<>();
         for (ItemRemision item : itemsAgregados) {
             Map<String, String> m = new HashMap<>();
@@ -496,9 +527,10 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         // Feature 6: anonymous remissions render with placeholder finca data
         Map<String, String> pdfFinca = isAnonymousRemision ? buildPlaceholderFinca() : fincaActual;
 
-        File fileT = new File(getFilesDir(), "firma_tecnico_" + consecutivo + ".png");
-        File fileC = new File(getFilesDir(), "firma_cliente_" + consecutivo + ".png");
-        
+        // Signatures were captured under the draft key (no consecutivo existed yet).
+        File fileT = new File(getFilesDir(), "firma_tecnico_" + SIGNATURE_DRAFT_KEY + ".png");
+        File fileC = new File(getFilesDir(), "firma_cliente_" + SIGNATURE_DRAFT_KEY + ".png");
+
         Bitmap bTecnico = BitmapFactory.decodeFile(fileT.getAbsolutePath());
         Bitmap bCliente = BitmapFactory.decodeFile(fileC.getAbsolutePath());
 
@@ -546,6 +578,9 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                     
                     // SAVE Metadata
                     Methods.saveRemisionData(this, consecutivo, pdfFinca, pdfItems, userData, false);
+
+                    // Consume the consecutivo only now that the send is confirmed
+                    Methods.commitConsecutivo(this, tecnicoNumero, consecutivo);
 
                     // FLUSH DRAFT and local state (draft kept on failure so it can be resent)
                     RemisionDraftCache.clear(tecnicoNumero);

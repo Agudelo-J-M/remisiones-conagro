@@ -1,146 +1,122 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:layout_margin="32dp"
-    tools:context=".MainActivity"
-    tools:layout_editor_absoluteX="32dp"
-    tools:layout_editor_absoluteY="32dp">
+    android:orientation="vertical"
+    android:padding="16dp">
 
     <TextView
-        android:id="@+id/tvw_TitleCambiarConsecutivo"
-        android:layout_width="0dp"
-        android:layout_height="85dp"
-        android:layout_marginTop="16dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:background="@color/dark_blue"
         android:gravity="center"
+        android:padding="16dp"
         android:text="@string/cambiar_consecutivo"
         android:textColor="@color/white"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.0"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        android:textSize="22sp"
+        android:textStyle="bold" />
 
-    <TextView
-        android:id="@+id/tvw_ConsecutivoActual"
-        android:layout_width="0dp"
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Próximo consecutivo actual:"
+                android:textColor="@color/black"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvw_ConsecutivoActualDisplay"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:background="@color/blue"
+                android:gravity="center"
+                android:padding="12dp"
+                android:text="@string/no_hay_consecutivo"
+                android:textColor="@color/white"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="Escriba el número de la última remisión enviada desde su correo (ej. 03000044). El sistema continuará desde el siguiente."
+                android:textColor="@color/black"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/edt_IngresarConsecutivoNuevo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="Última remisión enviada"
+                android:inputType="number"
+                android:textColor="@color/black"
+                android:textColorHint="@color/black" />
+
+            <EditText
+                android:id="@+id/edt_ConfirmarConsecutivo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="Confirme el número"
+                android:inputType="number"
+                android:textColor="@color/black"
+                android:textColorHint="@color/black" />
+
+            <CheckBox
+                android:id="@+id/chk_NuncaEnviado"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Nunca he enviado una remisión"
+                android:textColor="@color/black" />
+
+        </LinearLayout>
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="32dp"
-        android:layout_marginEnd="32dp"
-        android:background="@color/blue"
-        android:gravity="center"
-        android:text="@string/consecutivo_actual"
-        android:textColor="@color/white"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        app:layout_constraintBottom_toTopOf="@+id/tvw_ConsecutivoActualDisplay"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="1.0"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/tvw_TitleCambiarConsecutivo" />
+        android:layout_marginTop="16dp"
+        android:orientation="horizontal">
 
-    <TextView
-        android:id="@+id/tvw_ConsecutivoActualDisplay"
-        android:layout_width="0dp"
-        android:layout_height="85dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:autofillHints="usuario"
-        android:ems="10"
-        android:gravity="center"
-        android:text="@string/no_hay_consecutivo"
-        android:textColor="@color/black"
-        android:textColorHint="@color/black"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:translationY="-40dp"
-        app:layout_constraintBottom_toTopOf="@+id/tvw_ConsecutivoNuevo"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/tvw_ConsecutivoActual"
-        app:layout_constraintVertical_bias="0.5" />
+        <Button
+            android:id="@+id/btn_Cambiar"
+            style="@style/Widget.AppCompat.Button"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="@string/cambiar"
+            android:textColor="@color/white"
+            app:backgroundTint="@color/blue" />
 
+        <Button
+            android:id="@+id/btn_salirCambiarConsecutivo"
+            style="@style/Widget.AppCompat.Button"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="@string/salir"
+            android:textColor="@color/white"
+            app:backgroundTint="@color/blue" />
 
-    <TextView
-        android:id="@+id/tvw_ConsecutivoNuevo"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="32dp"
-        android:layout_marginEnd="32dp"
-        android:background="@color/blue"
-        android:gravity="center"
-        android:text="@string/consecutivo_nuevo"
-        android:textColor="@color/white"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:translationY="-40dp"
-        app:layout_constraintBottom_toTopOf="@+id/edt_IngresarConsecutivoNuevo"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/tvw_ConsecutivoActualDisplay"
-        app:layout_constraintVertical_bias="0.5" />
+    </LinearLayout>
 
-
-    <EditText
-        android:id="@+id/edt_IngresarConsecutivoNuevo"
-        android:layout_width="0dp"
-        android:layout_height="85dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:autofillHints="contraseña"
-        android:ems="10"
-        android:hint="Ingrese su último consecutivo\nde su última remisión (Sin prefijo)"
-        android:inputType="textPassword"
-        android:textColor="@color/black"
-        android:textColorHint="@color/black"
-        android:translationY="-80dp"
-        app:layout_constraintBottom_toTopOf="@+id/btn_Cambiar"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/tvw_ConsecutivoNuevo"
-        app:layout_constraintVertical_bias="0.5" />
-
-    <Button
-        android:id="@+id/btn_Cambiar"
-        style="@style/Widget.AppCompat.Button"
-        android:layout_width="0dp"
-        android:layout_height="75dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:gravity="center"
-        android:text="@string/cambiar"
-        android:textColor="@color/white"
-        app:backgroundTint="@color/blue"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toStartOf="@+id/btn_salirCambiarConsecutivo"
-        app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/edt_IngresarConsecutivoNuevo"
-        app:layout_constraintVertical_bias="0.5" />
-
-    <Button
-        android:id="@+id/btn_salirCambiarConsecutivo"
-        style="@style/Widget.AppCompat.Button"
-        android:layout_width="0dp"
-        android:layout_height="75dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:gravity="center"
-        android:text="@string/salir"
-        android:textColor="@color/white"
-        app:backgroundTint="@color/blue"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toEndOf="@+id/btn_Cambiar"
-        app:layout_constraintTop_toBottomOf="@+id/edt_IngresarConsecutivoNuevo"
-        app:layout_constraintVertical_bias="0.5" />
-
-</androidx.constraintlayout.widget.ConstraintLayout>
+</LinearLayout>

@@ -32,11 +32,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -661,31 +657,148 @@ public class Methods {
         return null;
     }
 
+    // ------------------------------------------------------------------
+    // Consecutivo (sequential referral numbering)
+    // Format: <técnico número, min 2 digits><6-digit sequence>, e.g. 03000001.
+    // Counter is stored per técnico número in app_config.json under "consecutivos".
+    // See docs/feature-consecutivo-remision.md.
+    // ------------------------------------------------------------------
+
+    /** Zero-pads the técnico prefix (2 digits min) and the 6-digit sequence: (3, 1) -> "03000001". */
+    public static String formatConsecutivo(String tecnicoNumero, int seq) {
+        String prefix;
+        try {
+            prefix = String.format(Locale.getDefault(), "%02d", Integer.parseInt(tecnicoNumero.trim()));
+        } catch (Exception e) {
+            prefix = tecnicoNumero != null ? tecnicoNumero.trim() : "";
+        }
+        return prefix + String.format(Locale.getDefault(), "%06d", seq);
+    }
+
+    /** Returns the last-used sequence stored for this técnico (0 if none set). */
+    public static synchronized int getStoredConsecutivo(Context context, String tecnicoNumero) {
+        try {
+            File file = new File(context.getFilesDir(), "app_config.json");
+            if (!file.exists()) return 0;
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] data = new byte[(int) file.length()];
+                fis.read(data);
+                JSONObject json = new JSONObject(new String(data, "UTF-8"));
+                JSONObject cons = json.optJSONObject("consecutivos");
+                if (cons == null) return 0;
+                return cons.optInt(tecnicoNumero, 0);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error reading consecutivo counter", e);
+            return 0;
+        }
+    }
+
+    /** Persists the last-used sequence for this técnico. */
+    public static synchronized void setStoredConsecutivo(Context context, String tecnicoNumero, int lastUsedSeq) {
+        try {
+            File file = new File(context.getFilesDir(), "app_config.json");
+            JSONObject json = new JSONObject();
+            if (file.exists()) {
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    byte[] data = new byte[(int) file.length()];
+                    fis.read(data);
+                    json = new JSONObject(new String(data, "UTF-8"));
+                }
+            }
+            JSONObject cons = json.optJSONObject("consecutivos");
+            if (cons == null) cons = new JSONObject();
+            cons.put(tecnicoNumero, lastUsedSeq);
+            json.put("consecutivos", cons);
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(json.toString().getBytes("UTF-8"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving consecutivo counter", e);
+        }
+    }
+
     /**
-     * Generates a unique consecutive ID for a remission based on the technician's number and timestamp.
+     * True once a counter has been established for this técnico. Uses key presence (not value),
+     * so a técnico who seeds "never sent" (sequence 0) still counts as configured.
      */
-    public static String generarConsecutivo(Context context, String tecnicoNumero) {
-        if (tecnicoNumero == null || tecnicoNumero.isEmpty()) {
-            showFatalError(context, "Error: El número del técnico no está disponible para generar consecutivo.");
+    public static synchronized boolean isConsecutivoInicializado(Context context, String tecnicoNumero) {
+        if (tecnicoNumero == null || tecnicoNumero.trim().isEmpty()) return false;
+        try {
+            File file = new File(context.getFilesDir(), "app_config.json");
+            if (file.exists()) {
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    byte[] data = new byte[(int) file.length()];
+                    fis.read(data);
+                    JSONObject json = new JSONObject(new String(data, "UTF-8"));
+                    JSONObject cons = json.optJSONObject("consecutivos");
+                    if (cons != null && cons.has(tecnicoNumero)) return true;
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking consecutivo init", e);
+        }
+        // Self-heal: if referral files survive, treat as configured.
+        return reconcileConsecutivo(context, tecnicoNumero) > 0;
+    }
+
+    /**
+     * Self-healing floor: the highest sequence among this técnico's local Remisión files
+     * (protects against a lost/rolled-back counter while the referral files survive).
+     */
+    public static synchronized int reconcileConsecutivo(Context context, String tecnicoNumero) {
+        String prefix;
+        try {
+            prefix = String.format(Locale.getDefault(), "%02d", Integer.parseInt(tecnicoNumero.trim()));
+        } catch (Exception e) {
+            prefix = tecnicoNumero != null ? tecnicoNumero.trim() : "";
+        }
+        final String fPrefix = prefix;
+        int max = 0;
+        File dir = context.getFilesDir();
+        File[] files = dir.listFiles((d, name) -> name != null && name.startsWith("Remision_" + fPrefix) && name.endsWith(".json"));
+        if (files == null) return 0;
+        for (File f : files) {
+            String id = f.getName().replace("Remision_", "").replace(".json", "");
+            // Only new-format ids: <prefix><exactly 6 digits>
+            if (id.length() == fPrefix.length() + 6 && id.startsWith(fPrefix)) {
+                String suffix = id.substring(fPrefix.length());
+                try {
+                    int s = Integer.parseInt(suffix);
+                    if (s > max) max = s;
+                } catch (Exception ignore) {}
+            }
+        }
+        return max;
+    }
+
+    /**
+     * Returns the next consecutivo for this técnico WITHOUT consuming it.
+     * A missing técnico número is a fatal, unrecoverable configuration error.
+     */
+    public static String peekProximoConsecutivo(Context context, String tecnicoNumero) {
+        if (tecnicoNumero == null || tecnicoNumero.trim().isEmpty()) {
+            showFatalError(context, "El técnico no tiene un número asignado en 'Datos App.xlsx'. "
+                    + "Notifique a la oficina. La aplicación se cerrará.");
             return null;
         }
+        int base = Math.max(getStoredConsecutivo(context, tecnicoNumero), reconcileConsecutivo(context, tecnicoNumero));
+        return formatConsecutivo(tecnicoNumero, base + 1);
+    }
 
-        // Feature: Standardize ID to 2-digits (3 -> 03, 105 -> 105)
-        String prefix = tecnicoNumero;
+    /**
+     * Consumes the given consecutivo by persisting its sequence as the last used for this técnico.
+     * Call only after a remisión has been successfully sent.
+     */
+    public static synchronized void commitConsecutivo(Context context, String tecnicoNumero, String consecutivo) {
+        if (tecnicoNumero == null || consecutivo == null || consecutivo.length() < 6) return;
         try {
-            prefix = String.format(Locale.getDefault(), "%02d", Integer.parseInt(tecnicoNumero));
+            int seq = Integer.parseInt(consecutivo.substring(consecutivo.length() - 6));
+            if (seq > getStoredConsecutivo(context, tecnicoNumero)) {
+                setStoredConsecutivo(context, tecnicoNumero, seq);
+            }
         } catch (Exception e) {
-            Log.e(TAG, "Error formatting técnico ID", e);
-        }
-
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            // Hardcoded custom epoch             
-            OffsetDateTime customEpoch = OffsetDateTime.of(2026, 5, 14, 0, 0, 0, 0, ZoneOffset.UTC);
-            Instant now = Instant.now();
-            long minutesSinceCustomEpoch = ChronoUnit.MINUTES.between(customEpoch.toInstant(), now);
-            return prefix + minutesSinceCustomEpoch;
-        } else {
-            return prefix + (System.currentTimeMillis() / 60000);
+            Log.e(TAG, "Error committing consecutivo", e);
         }
     }
 

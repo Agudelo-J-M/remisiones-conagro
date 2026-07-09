@@ -92,6 +92,12 @@ public class MenuActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        findViewById(R.id.btn_CambiarConsecutivo).setOnClickListener(v -> {
+            Intent intent = new Intent(this, CambiarConsecutivoActivity.class);
+            intent.putExtra("userData", userData);
+            startActivity(intent);
+        });
+
         findViewById(R.id.btn_cerrarSesion).setOnClickListener(v -> {
             Intent intent = new Intent(this, MainActivity.class);
             startActivity(intent);
