@@ -147,20 +147,21 @@ public class PedirFirmaActivity extends AppCompatActivity {
             Log.e(TAG, "ERROR loading workbook", e);
         }
 
-        // 2. Promotion & Cache Copy
+        final XSSFWorkbook finalWb = wb;
+
+        // 2. Cache copy for sharing ONLY. The definitive Inventario.xlsx is NOT promoted here;
+        //    promotion happens only after the técnico confirms the email was sent (see below),
+        //    so a cancelled/failed send never commits the new inventory.
         String originalName = Methods.getLastInventoryFileName(this);
         if (originalName == null || originalName.isEmpty()) originalName = "Inventario_Aceptado.xlsx";
         if (!originalName.toLowerCase().endsWith(".xlsx")) originalName += ".xlsx";
-
-        // Save definitively as main database
-        Methods.saveWorkbook(this, wb, "Inventario.xlsx");
 
         // Copy to cache for sharing
         File shareFile = new File(getCacheDir(), originalName);
         try {
             if (shareFile.getParentFile() != null && !shareFile.getParentFile().exists()) shareFile.getParentFile().mkdirs();
             try (FileOutputStream fos = new FileOutputStream(shareFile)) {
-                if (wb != null) wb.write(fos);
+                if (finalWb != null) finalWb.write(fos);
             }
         } catch (Exception e) {
             Log.e(TAG, "ERROR saving share file", e);
@@ -199,18 +200,17 @@ public class PedirFirmaActivity extends AppCompatActivity {
         // Show confirmation dialog before internal data promotion/cleanup
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Confirmación")
-                .setMessage("¿Se envió el correo correctamente? Si confirma, el inventario será guardado permanentemente y se vaciará el carro.")
+                .setMessage("¿Se envió el correo correctamente? Si confirma, el inventario será guardado permanentemente.")
                 .setPositiveButton("Sí, enviado", (dialog, which) -> {
-                    // SECURE DELETION: Only now we delete both sensitive files
+                    // Promote temp -> definitive ONLY now that the send is confirmed
+                    Methods.saveWorkbook(this, finalWb, "Inventario.xlsx");
+
+                    // SECURE DELETION: delete sensitive files now
                     if (signatureFile.exists()) signatureFile.delete();
                     if (tempFile.exists()) tempFile.delete();
-                    
-                    /* Reenable later if strictly needed
-                    Methods.saveCarInventory(this, new HashMap<>());
-                    */
-                    Methods.setInventarioWbToNull(); // Force reload next time
 
-                    // Close activity immediately after confirmation
+                    Methods.setInventarioWbToNull(); // Force reload from the new definitive next time
+
                     finish();
                 })
                 .setNegativeButton("No", (dialog, which) -> {
