@@ -533,6 +533,7 @@ public class Methods {
 
     /**
      * Consolidated search for products and maintenance services.
+     * Branches search logic: Products search by Ref, Services search by Description.
      */
     public static Map<String, String> buscarItem(String query, boolean isService) {
         Sheet sheet = isService ? tarifasMantenimientoSheet : productosSheet;
@@ -544,16 +545,28 @@ public class Methods {
 
         if (idxRef == -1 || idxNom == -1) return null;
 
-        // Clean query if it came from autocomplete "Ref - Name"
-        String reference = query.split(" - ")[0].trim();
+        // For products, handle "Ref - Name" format from autocomplete
+        String cleanRef = query.split(" - ")[0].trim();
 
         for (Row row : sheet) {
             if (row.getRowNum() == 0) continue;
+            
             String fileRef = dataFormatter.formatCellValue(row.getCell(idxRef));
-            if (reference.equalsIgnoreCase(fileRef)) {
+            String fileNom = dataFormatter.formatCellValue(row.getCell(idxNom));
+
+            boolean isMatch;
+            if (isService) {
+                // Maintenance: Must match by FULL Description (Nombre)
+                isMatch = query.equalsIgnoreCase(fileNom);
+            } else {
+                // Product: Must match by Reference ID
+                isMatch = cleanRef.equalsIgnoreCase(fileRef);
+            }
+
+            if (isMatch) {
                 Map<String, String> map = new HashMap<>();
                 map.put("id", fileRef);
-                map.put("nombre", dataFormatter.formatCellValue(row.getCell(idxNom)));
+                map.put("nombre", fileNom);
                 map.put("precio", idxPrecio != -1 ? dataFormatter.formatCellValue(row.getCell(idxPrecio)) : "0");
                 return map;
             }
@@ -574,32 +587,6 @@ public class Methods {
      */
     public static Map<String, String> buscarMantenimiento(String desc) {
         return buscarItem(desc, true);
-    }
-
-    /**
-     * Saves remission metadata, items, and optional client data to a JSON file.
-     */
-    public static synchronized void saveDraftRemision(Context context, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tempClientData) {
-        try {
-            JSONObject json = new JSONObject();
-            if (fincaData != null) json.put("fincaData", new JSONObject(fincaData));
-            if (tempClientData != null) json.put("tempClientData", new JSONObject(tempClientData));
-            
-            org.json.JSONArray itemsArray = new org.json.JSONArray();
-            if (items != null) {
-                for (Map<String, String> item : items) {
-                    itemsArray.put(new JSONObject(item));
-                }
-            }
-            json.put("items", itemsArray);
-            
-            File file = new File(context.getFilesDir(), "remision_draft.json");
-            try (FileOutputStream fos = new FileOutputStream(file)) {
-                fos.write(json.toString().getBytes("UTF-8"));
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error saving draft", e);
-        }
     }
 
     /**
@@ -781,47 +768,6 @@ public class Methods {
         }
     }
 
-    public static synchronized void saveDraftRemision(Context context, Map<String, String> fincaData, List<Map<String, String>> items) {
-        try {
-            JSONObject json = new JSONObject();
-            if (fincaData != null) json.put("fincaData", new JSONObject(fincaData));
-            
-            org.json.JSONArray itemsArray = new org.json.JSONArray();
-            if (items != null) {
-                for (Map<String, String> item : items) {
-                    itemsArray.put(new JSONObject(item));
-                }
-            }
-            json.put("items", itemsArray);
-            
-            File file = new File(context.getFilesDir(), "remision_draft.json");
-            try (FileOutputStream fos = new FileOutputStream(file)) {
-                fos.write(json.toString().getBytes("UTF-8"));
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error saving draft", e);
-        }
-    }
-
-    public static JSONObject loadDraftRemision(Context context) {
-        File file = new File(context.getFilesDir(), "remision_draft.json");
-        if (!file.exists()) return null;
-        try (FileInputStream fis = new FileInputStream(file)) {
-            byte[] data = new byte[(int) file.length()];
-            int read = fis.read(data);
-            if (read == 0) return null;
-            return new JSONObject(new String(data, "UTF-8"));
-        } catch (Exception e) {
-            Log.e(TAG, "Draft corrupted or unreadable", e);
-            file.delete(); // Auto-clean corrupted drafts
-            return null;
-        }
-    }
-
-    public static void deleteDraftRemision(Context context) {
-        File file = new File(context.getFilesDir(), "remision_draft.json");
-        if (file.exists()) file.delete();
-    }
 
     /**
      * Retrieves remission data from JSON.
@@ -1128,8 +1074,23 @@ public class Methods {
         PdfDocument document = new PdfDocument();
         int itemsPerPage = 10;
         int totalItems = items.size();
-        int totalPages = (int) Math.ceil((double) totalItems / itemsPerPage);
-        if (totalPages == 0) totalPages = 1;
+
+        // Layout anchors for the footer-overlap guard (Feature 4)
+        final float FOOTER_TOP = 750f;
+        final float FIRST_ITEM_Y = 227f;   // baseline of the first item row (after company + finca + table header)
+        final float ROW_HEIGHT = 20f;
+        final float CLUSTER_HEIGHT = 275f; // height of the totals + signatures + observaciones block
+
+        int contentPages = (int) Math.ceil((double) totalItems / itemsPerPage);
+        if (contentPages == 0) contentPages = 1;
+
+        // Items rendered on the last content page
+        int itemsOnLastPage = totalItems - (contentPages - 1) * itemsPerPage;
+        float yAfterLastItems = FIRST_ITEM_Y + itemsOnLastPage * ROW_HEIGHT;
+
+        // Guard: if the bottom cluster would collide with the footer, push it to its own final page
+        boolean clusterOnOwnPage = (yAfterLastItems + CLUSTER_HEIGHT) > FOOTER_TOP;
+        int totalPages = contentPages + (clusterOnOwnPage ? 1 : 0);
 
         Paint paint = new Paint();
         Paint titlePaint = new Paint();
@@ -1167,6 +1128,9 @@ public class Methods {
         canvas.drawText("PERSONA: " + fincaData.getOrDefault("persona_nombre", ""), x, y, paint);
         canvas.drawText("TEL: " + fincaData.getOrDefault("persona_telefono", ""), 350, y, paint);
 
+            boolean isContentPage = p < contentPages;
+
+            if (isContentPage) {
             y += 30;
             // Table Header
             paint.setFakeBoldText(true);
@@ -1204,9 +1168,10 @@ public class Methods {
                 canvas.drawText(String.format(Locale.getDefault(), "%,.2f", total), x + 440, y, paint);
                 y += 20;
             }
+            } // end isContentPage
 
             // --- FOOTER (on every page) ---
-            float footerY = 750;
+            float footerY = FOOTER_TOP;
             paint.setTextSize(7f);
             paint.setFakeBoldText(true);
             canvas.drawText("PUNTO DE VENTA SAN PEDRO", x, footerY, paint);
@@ -1278,7 +1243,7 @@ public class Methods {
                 
                 y += 5;
                 paint.setStyle(Paint.Style.STROKE);
-                canvas.drawRect(x, y, 550, y + 40, paint); // Observaciones Box
+                canvas.drawRect(x, y, 550, y + 60, paint); // Increased box height
                 paint.setStyle(Paint.Style.FILL);
                 
                 String obsText = (observaciones != null && !observaciones.isEmpty()) ? observaciones : "Sin observaciones";
@@ -1311,7 +1276,7 @@ public class Methods {
 
                 float currentY = y + 15;
                 for (String line : wrappedLines) {
-                    if (currentY > y + 35) break; // Hard limit for observations box height
+                    if (currentY > y + 55) break; // Increased height limit
                     canvas.drawText(line, x + 5, currentY, paint);
                     currentY += 12;
                 }

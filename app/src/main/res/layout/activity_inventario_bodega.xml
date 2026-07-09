@@ -33,18 +33,12 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <HorizontalScrollView
+        <TableLayout
+            android:id="@+id/tly_TablaDatos_Inventario_Bodega"
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
-
-            <TableLayout
-                android:id="@+id/tly_TablaDatos_Inventario_Bodega"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content">
-                <!-- Header populated programmatically to adapt to view mode -->
-            </TableLayout>
-
-        </HorizontalScrollView>
+            <!-- Header populated programmatically to adapt to view mode -->
+        </TableLayout>
     </ScrollView>
 
     <LinearLayout

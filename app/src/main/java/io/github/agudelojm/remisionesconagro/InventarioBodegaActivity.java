@@ -105,20 +105,22 @@ public class InventarioBodegaActivity extends AppCompatActivity {
         try {
             // 1. Load Current Definitive Inventory as reference
             Map<String, Double> currentInventory = new HashMap<>();
+            Map<String, String> currentNames = new HashMap<>();
             XSSFWorkbook definitiveWb = Methods.getInventarioWb();
             if (definitiveWb == null) definitiveWb = Methods.loadInventarioWb(this);
             if (definitiveWb != null) {
                 Sheet defSheet = definitiveWb.getSheet("Inventario");
                 if (defSheet == null) defSheet = definitiveWb.getSheetAt(0);
-                
+
                 DataFormatter df = Methods.getDataFormatter();
-                int idxRef = -1, idxSaldo = -1;
+                int idxRef = -1, idxSaldo = -1, idxNombre = -1;
                 Row h = defSheet.getRow(0);
                 if (h != null) {
                     for (Cell c : h) {
                         String v = df.formatCellValue(c).toLowerCase().trim();
                         if (v.contains("referencia")) idxRef = c.getColumnIndex();
                         else if (v.contains("saldo")) idxSaldo = c.getColumnIndex();
+                        else if (v.contains("nombre")) idxNombre = c.getColumnIndex();
                     }
                 }
 
@@ -128,7 +130,10 @@ public class InventarioBodegaActivity extends AppCompatActivity {
                         String ref = df.formatCellValue(r.getCell(idxRef));
                         String saldoStr = df.formatCellValue(r.getCell(idxSaldo)).replace(",", ".");
                         try {
-                            if (!ref.isEmpty()) currentInventory.put(ref, Double.parseDouble(saldoStr));
+                            if (!ref.isEmpty()) {
+                                currentInventory.put(ref, Double.parseDouble(saldoStr));
+                                if (idxNombre != -1) currentNames.put(ref, df.formatCellValue(r.getCell(idxNombre)));
+                            }
                         } catch (Exception e) {}
                     }
                 }
@@ -136,9 +141,12 @@ public class InventarioBodegaActivity extends AppCompatActivity {
 
             // 2. Load Target Workbook (Temp or Definitive)
             inventarioWb = Methods.loadWorkbookFromFile(this, "Inventario_Temp.xlsx");
-            boolean isComparison = (inventarioWb != null);
-            
-            if (inventarioWb == null) {
+            boolean hasTemp = (inventarioWb != null);
+            // Only compare columns when there is a previously accepted inventory to compare against.
+            // On a fresh install (no definitive yet) we just show the new inventory as-is.
+            boolean isComparison = hasTemp && !currentInventory.isEmpty();
+
+            if (!hasTemp) {
                 isTemporaryView = false;
                 btnAceptar.setVisibility(View.GONE);
                 btnRechazar.setVisibility(View.GONE);
@@ -147,17 +155,20 @@ public class InventarioBodegaActivity extends AppCompatActivity {
                 isTemporaryView = true;
                 btnAceptar.setVisibility(View.VISIBLE);
                 btnRechazar.setVisibility(View.VISIBLE);
-                
+
                 if (!alertShowing) {
                     alertShowing = true;
-                    AlertDialog ad = Methods.showAlert(this, "Mostrando Nuevo Inventario Pendiente de Aceptación.");
+                    String msg = isComparison
+                            ? "Mostrando Nuevo Inventario Pendiente de Aceptación."
+                            : "Mostrando Nuevo Inventario. No hay inventario previo para comparar.";
+                    AlertDialog ad = Methods.showAlert(this, msg);
                     ad.setOnDismissListener(dialog -> alertShowing = false);
                     ad.show();
                 }
             }
 
             if (inventarioWb != null) {
-                poblarTabla(inventarioWb, isComparison ? currentInventory : null);
+                poblarTabla(inventarioWb, isComparison ? currentInventory : null, currentNames);
             } else {
                 Methods.showAlert(this, "No se ha cargado archivo de inventario de bodega").show();
             }
@@ -167,7 +178,7 @@ public class InventarioBodegaActivity extends AppCompatActivity {
         }
     }
 
-    private void poblarTabla(XSSFWorkbook wb, Map<String, Double> currentRef) {
+    private void poblarTabla(XSSFWorkbook wb, Map<String, Double> currentRef, Map<String, String> currentNames) {
         try {
             Sheet sheet = wb.getSheet("Inventario");
             if (sheet == null) sheet = wb.getSheetAt(0);
@@ -178,14 +189,19 @@ public class InventarioBodegaActivity extends AppCompatActivity {
             Row headerRow = sheet.getRow(0);
             if (headerRow == null) return;
 
+            StringBuilder headerDump = new StringBuilder();
             for (Cell cell : headerRow) {
-                String val = df.formatCellValue(cell).toLowerCase().trim();
+                String raw = df.formatCellValue(cell);
+                headerDump.append("[").append(raw).append("]");
+                String val = raw.toLowerCase().trim();
                 if (val.contains("referencia")) idxItem = cell.getColumnIndex();
                 else if (val.contains("nombre")) idxNombre = cell.getColumnIndex();
                 else if (val.contains("saldo")) idxCant = cell.getColumnIndex();
             }
-
-            if (idxItem == -1 || idxNombre == -1 || idxCant == -1) return;
+            if (idxItem == -1 || idxNombre == -1 || idxCant == -1) {
+                Methods.showAlert(this, "No se detectaron las columnas (referencia/nombre/saldo).\nCabeceras leídas: " + headerDump).show();
+                return;
+            }
 
             // Header UI
             TableRow tableHeader = new TableRow(this);
@@ -202,18 +218,46 @@ public class InventarioBodegaActivity extends AppCompatActivity {
             tlyTabla.addView(tableHeader);
 
             List<InventoryData> list = new ArrayList<>();
+            java.util.Set<String> seenRefs = new java.util.HashSet<>();
             for (Row row : sheet) {
                 if (row.getRowNum() == 0) continue;
                 String id = df.formatCellValue(row.getCell(idxItem));
                 String name = df.formatCellValue(row.getCell(idxNombre));
                 String qtyNewStr = df.formatCellValue(row.getCell(idxCant)).replace(",", ".");
-                
+
                 double valNew = 0;
                 try { valNew = Double.parseDouble(qtyNewStr); } catch (Exception e) {}
-                
-                Double oldValObj = (currentRef != null) ? currentRef.get(id) : null;
-                double valOld = (oldValObj != null) ? oldValObj : valNew;
-                list.add(new InventoryData(id, name, valOld, valNew, currentRef != null));
+
+                if (currentRef == null) {
+                    // Plain view (no comparison)
+                    list.add(new InventoryData(id, name, valNew, valNew, false));
+                    continue;
+                }
+
+                seenRefs.add(id);
+                Double oldValObj = currentRef.get(id);
+                if (oldValObj == null) {
+                    // Added: product not present in the previous inventory (shown as 0 -> valNew)
+                    list.add(new InventoryData(id, name, 0, valNew, true));
+                } else {
+                    list.add(new InventoryData(id, name, oldValObj, valNew, oldValObj != valNew));
+                }
+            }
+
+            // Surface removed products: present before, absent in the new file (shown as valOld -> 0)
+            if (currentRef != null) {
+                for (Map.Entry<String, Double> entry : currentRef.entrySet()) {
+                    if (!seenRefs.contains(entry.getKey())) {
+                        String name = (currentNames != null)
+                                ? currentNames.getOrDefault(entry.getKey(), entry.getKey())
+                                : entry.getKey();
+                        list.add(new InventoryData(entry.getKey(), name, entry.getValue(), 0, true));
+                    }
+                }
+            }
+
+            if (list.isEmpty()) {
+                Methods.showAlert(this, "El inventario no contiene filas de datos.").show();
             }
 
             // Sort: Differences first (isDifferent=true), then by Name
@@ -233,9 +277,9 @@ public class InventarioBodegaActivity extends AppCompatActivity {
                 row.addView(tvName);
 
                 if (currentRef != null) {
-                    TextView tvOld = crearTextViewCelda(String.valueOf((int)data.oldQty), 1f);
-                    TextView tvNew = crearTextViewCelda(String.valueOf((int)data.newQty), 1f);
-                    
+                    TextView tvOld = crearTextViewCelda(fmtQty(data.oldQty), 1f);
+                    TextView tvNew = crearTextViewCelda(fmtQty(data.newQty), 1f);
+
                     if (data.isDifferent) {
                         tvOld.setTextColor(Color.RED);
                         tvNew.setTextColor(Color.RED);
@@ -246,7 +290,7 @@ public class InventarioBodegaActivity extends AppCompatActivity {
                     row.addView(tvOld);
                     row.addView(tvNew);
                 } else {
-                    row.addView(crearTextViewCelda(String.valueOf((int)data.newQty), 1f));
+                    row.addView(crearTextViewCelda(fmtQty(data.newQty), 1f));
                 }
 
                 tlyTabla.addView(row);
@@ -260,10 +304,15 @@ public class InventarioBodegaActivity extends AppCompatActivity {
         String id, name;
         double oldQty, newQty;
         boolean isDifferent;
-        InventoryData(String id, String name, double old, double newQ, boolean checkDiff) {
+        InventoryData(String id, String name, double old, double newQ, boolean isDifferent) {
             this.id = id; this.name = name; this.oldQty = old; this.newQty = newQ;
-            this.isDifferent = checkDiff && (old != newQ);
+            this.isDifferent = isDifferent;
         }
+    }
+
+    /** Formats an inventory quantity, keeping decimals only when present (avoids truncation). */
+    private String fmtQty(double v) {
+        return new java.text.DecimalFormat("0.##").format(v);
     }
 
     private TextView crearTextViewCelda(String texto, float weight) {

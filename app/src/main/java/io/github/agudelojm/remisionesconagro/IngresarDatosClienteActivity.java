@@ -19,6 +19,7 @@ import java.util.Map;
 public class IngresarDatosClienteActivity extends AppCompatActivity {
 
     private EditText edtFinca, edtDir, edtCiu, edtNom, edtTel, edtEmail;
+    private String tecnicoNumero = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -26,6 +27,9 @@ public class IngresarDatosClienteActivity extends AppCompatActivity {
         setContentView(R.layout.activity_ingresar_datos_cliente);
 
         Methods.updateActivity(this);
+
+        String numero = getIntent().getStringExtra("tecnicoNumero");
+        if (numero != null) tecnicoNumero = numero;
 
         edtFinca = findViewById(R.id.edt_Nuevo_NombreFinca);
         edtDir = findViewById(R.id.edt_Nuevo_Direccion);
@@ -94,22 +98,19 @@ public class IngresarDatosClienteActivity extends AppCompatActivity {
         data.put("nom", edtNom.getText().toString());
         data.put("tel", edtTel.getText().toString());
         data.put("email", edtEmail.getText().toString());
-        // We pass null for fincaData as this is for NEW clients where fincaActual is null
-        Methods.saveDraftRemision(this, null, null, data);
+        RemisionDraftCache.saveTempClient(tecnicoNumero, data);
     }
 
     private void loadClientDraft() {
-        org.json.JSONObject draft = Methods.loadDraftRemision(this);
-        if (draft != null && draft.has("tempClientData")) {
-            try {
-                org.json.JSONObject data = draft.getJSONObject("tempClientData");
-                edtFinca.setText(data.optString("finca", ""));
-                edtDir.setText(data.optString("dir", ""));
-                edtCiu.setText(data.optString("ciu", ""));
-                edtNom.setText(data.optString("nom", ""));
-                edtTel.setText(data.optString("tel", ""));
-                edtEmail.setText(data.optString("email", ""));
-            } catch (Exception e) {}
+        RemisionDraftCache.Draft draft = RemisionDraftCache.get(tecnicoNumero);
+        if (draft != null && draft.tempClientData != null) {
+            Map<String, String> data = draft.tempClientData;
+            edtFinca.setText(data.getOrDefault("finca", ""));
+            edtDir.setText(data.getOrDefault("dir", ""));
+            edtCiu.setText(data.getOrDefault("ciu", ""));
+            edtNom.setText(data.getOrDefault("nom", ""));
+            edtTel.setText(data.getOrDefault("tel", ""));
+            edtEmail.setText(data.getOrDefault("email", ""));
         }
     }
 }

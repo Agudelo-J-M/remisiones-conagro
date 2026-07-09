@@ -323,7 +323,6 @@ public class EditarRemisionActivity extends AppCompatActivity {
         }
 
         actualizarTabla();
-        saveDraft();
         edtProductoRef.setText("");
         tvwNombreProducto.setText("");
         edtCantidad.setText("1");
@@ -360,7 +359,6 @@ public class EditarRemisionActivity extends AppCompatActivity {
             btnDelete.setOnClickListener(v -> {
                 itemsAgregados.remove(finalI);
                 actualizarTabla();
-                saveDraft();
             });
             row.addView(btnDelete);
             
@@ -475,7 +473,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
                     
                     // 4. Update permanent metadata
                     Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
-                    
+
                     finish();
                 })
                 .setNegativeButton("No", (dialog, which) -> {
@@ -487,9 +485,5 @@ public class EditarRemisionActivity extends AppCompatActivity {
                 })
                 .setCancelable(false)
                 .show();
-    }
-    private void saveDraft() {
-        List<Map<String, String>> mappedItems = itemsToMap(itemsAgregados);
-        Methods.saveDraftRemision(this, fincaActual, mappedItems, null);
     }
 }

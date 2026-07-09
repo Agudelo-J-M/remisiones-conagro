@@ -44,6 +44,7 @@
             android:layout_marginTop="16dp"
             android:hint="Nombre Finca"
             android:inputType="textCapCharacters"
+            android:maxLength="40"
             app:layout_constraintTop_toBottomOf="@id/tvw_Info"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
@@ -55,6 +56,7 @@
             android:layout_marginTop="8dp"
             android:hint="Dirección"
             android:inputType="textCapSentences"
+            android:maxLength="40"
             app:layout_constraintTop_toBottomOf="@id/edt_Nuevo_NombreFinca"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
@@ -66,6 +68,7 @@
             android:layout_marginTop="8dp"
             android:hint="Ciudad"
             android:inputType="textCapSentences"
+            android:maxLength="30"
             app:layout_constraintTop_toBottomOf="@id/edt_Nuevo_Direccion"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
@@ -77,6 +80,7 @@
             android:layout_marginTop="8dp"
             android:hint="Nombre Cliente"
             android:inputType="textPersonName|textCapWords"
+            android:maxLength="40"
             app:layout_constraintTop_toBottomOf="@id/edt_Nuevo_Ciudad"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
@@ -88,6 +92,7 @@
             android:layout_marginTop="8dp"
             android:hint="Teléfono"
             android:inputType="phone"
+            android:maxLength="15"
             app:layout_constraintTop_toBottomOf="@id/edt_Nuevo_NombrePersona"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
@@ -99,6 +104,7 @@
             android:layout_marginTop="8dp"
             android:hint="Email"
             android:inputType="textEmailAddress"
+            android:maxLength="40"
             app:layout_constraintTop_toBottomOf="@id/edt_Nuevo_Telefono"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />

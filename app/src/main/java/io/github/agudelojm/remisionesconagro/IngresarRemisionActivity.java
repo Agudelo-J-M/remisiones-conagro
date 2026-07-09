@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -25,8 +27,6 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
-
-import org.json.JSONObject;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -52,6 +52,11 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     private String tecnicoNumero = "";
     private String consecutivo = "";
     private String currentObservaciones = "Sin observaciones";
+
+    // Feature 6: placeholder client used for anonymous / nonexistent-client remissions
+    private static final String PLACEHOLDER_FINCA_ID = "000";
+    private static final String PLACEHOLDER_FINCA_NOMBRE = "CLIENTE POR DEFINIR";
+    private boolean isAnonymousRemision = false;
 
     private final ActivityResultLauncher<Intent> clientDataLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
@@ -115,37 +120,35 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     }
 
     private void loadDraft() {
-        JSONObject draft = Methods.loadDraftRemision(this);
+        RemisionDraftCache.Draft draft = RemisionDraftCache.get(tecnicoNumero);
         if (draft == null) return;
-        try {
-            if (draft.has("fincaData")) {
-                JSONObject fincaJson = draft.getJSONObject("fincaData");
-                fincaActual = new HashMap<>();
-                java.util.Iterator<String> keys = fincaJson.keys();
-                while (keys.hasNext()) {
-                    String key = keys.next();
-                    fincaActual.put(key, fincaJson.getString(key));
-                }
-                edtFincaID.setText(fincaActual.getOrDefault("finca_id", ""), false);
-                tvwNombreFinca.setText(fincaActual.getOrDefault("finca_nombre", ""));
-                tvwNombreFinca.setTextColor(getResources().getColor(R.color.blue));
+
+        // Capture references up front: setting the finca field below triggers the TextWatcher,
+        // whose saveDraft() would otherwise overwrite draft.items before we finish restoring them.
+        Map<String, String> savedFinca = draft.finca;
+        List<Map<String, String>> savedItems = draft.items;
+
+        // Restore items first, so the finca field's watcher persists them (not an empty list).
+        if (savedItems != null && !savedItems.isEmpty()) {
+            for (Map<String, String> m : savedItems) {
+                itemsAgregados.add(new ItemRemision(
+                        m.getOrDefault("id", ""),
+                        m.getOrDefault("nombre", ""),
+                        m.getOrDefault("cantidad", "1"),
+                        m.getOrDefault("precio", "0"),
+                        m.getOrDefault("tipo", "producto")
+                ));
             }
-            if (draft.has("items")) {
-                org.json.JSONArray itemsArray = draft.getJSONArray("items");
-                for (int i = 0; i < itemsArray.length(); i++) {
-                    JSONObject itemJson = itemsArray.getJSONObject(i);
-                    itemsAgregados.add(new ItemRemision(
-                            itemJson.getString("id"),
-                            itemJson.getString("nombre"),
-                            itemJson.getString("cantidad"),
-                            itemJson.getString("precio"),
-                            itemJson.optString("tipo", "producto")
-                    ));
-                }
-                actualizarTabla();
+            actualizarTabla();
+        }
+
+        // Never restore the placeholder into a new session; the watcher resolves the name.
+        if (savedFinca != null) {
+            String id = savedFinca.getOrDefault("finca_id", "");
+            if (!isPlaceholderId(id)) {
+                edtFincaID.setText(id, false);
+                edtFincaID.setSelection(id.length());
             }
-        } catch (Exception e) {
-            Log.e("Draft", "Error loading draft", e);
         }
     }
 
@@ -160,13 +163,15 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             m.put("tipo", item.tipo);
             mappedItems.add(m);
         }
-        Methods.saveDraftRemision(this, fincaActual, mappedItems, null);
+        RemisionDraftCache.saveRemision(tecnicoNumero, fincaActual, mappedItems);
     }
 
     private void initViews() {
         tvwTitulo = findViewById(R.id.tvw_Titulo_Ingresar_Remision);
         edtFincaID = findViewById(R.id.edt_FincaID_Ingresar_Remision);
         tvwNombreFinca = findViewById(R.id.tvw_NombreFinca_Ingresar_Remision);
+        tvwNombreFinca.setText("Cliente sin registrar");
+        tvwNombreFinca.setTextColor(Color.GRAY);
         
         rgpTipoItem = findViewById(R.id.rgp_TipoItem_Ingresar_Remision);
         rbtProducto = findViewById(R.id.rbt_Producto_Ingresar_Remision);
@@ -193,16 +198,26 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     }
 
     private void setupListeners() {
-        // Search Finca Name when user selects an item or finishes inputting ID
-        edtFincaID.setOnItemClickListener((parent, view, position, id) -> {
-            String selected = (String) parent.getItemAtPosition(position);
-            buscarYMostrarFinca(selected);
+        // Feature 6: Invalidate the cached client the moment the field no longer matches it,
+        // so a deleted/edited ID can never carry stale finca data into the PDF or email.
+        // Guarded so that programmatic setText(id) after a successful lookup does NOT wipe it.
+        edtFincaID.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            @Override
+            public void afterTextChanged(Editable s) {
+                // Live client resolution: refresh the name label as the ID changes
+                mostrarNombreFinca(s.toString().trim());
+                saveDraft();
+            }
         });
 
-        edtFincaID.setOnFocusChangeListener((v, hasFocus) -> {
-            if (!hasFocus) {
-                buscarYMostrarFinca(edtFincaID.getText().toString().trim());
-            }
+        // Autocomplete selection: clean the field down to just the ID; the watcher resolves the name
+        edtFincaID.setOnItemClickListener((parent, view, position, id) -> {
+            String selected = (String) parent.getItemAtPosition(position);
+            String fincaId = selected.split(" - ")[0].trim();
+            edtFincaID.setText(fincaId, false);
+            edtFincaID.setSelection(fincaId.length());
         });
 
         // Search Product Name when user selects an item or finishes inputting Ref
@@ -233,18 +248,20 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         btnFinalizarRemision.setOnClickListener(v -> finalizarRemision());
     }
 
-    private void buscarYMostrarFinca(String query) {
-        if (query.isEmpty()) return;
-        fincaActual = Methods.buscarCliente(query);
-        if (fincaActual != null) {
-            tvwNombreFinca.setText(fincaActual.getOrDefault("finca_nombre", "Finca encontrada"));
+    /**
+     * Resolves the finca for the given ID and updates the name label live, WITHOUT rewriting the
+     * field text. Shows the matching client name, or "Cliente sin registrar" when empty/unknown.
+     */
+    private void mostrarNombreFinca(String query) {
+        Map<String, String> resolved = query.isEmpty() ? null : Methods.buscarCliente(query);
+        if (resolved != null) {
+            fincaActual = resolved;
+            tvwNombreFinca.setText(resolved.getOrDefault("finca_nombre", "Finca encontrada"));
             tvwNombreFinca.setTextColor(getResources().getColor(R.color.blue));
-            // Update text to just the ID to avoid messy submission
-            edtFincaID.setText(fincaActual.getOrDefault("finca_id", query), false);
-            saveDraft();
         } else {
-            tvwNombreFinca.setText(query + " no encontrado");
-            tvwNombreFinca.setTextColor(Color.RED);
+            fincaActual = null;
+            tvwNombreFinca.setText("Cliente sin registrar");
+            tvwNombreFinca.setTextColor(Color.GRAY);
         }
     }
 
@@ -270,20 +287,6 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     }
 
     private void agregarItem() {
-        String fincaId = edtFincaID.getText().toString().trim();
-        if (fincaId.isEmpty()) {
-            Methods.showAlert(this, "Debe ingresar el ID de la Finca").show();
-            return;
-        }
-
-        if (fincaActual == null || !fincaId.equalsIgnoreCase(fincaActual.get("finca_id"))) {
-            fincaActual = Methods.buscarCliente(fincaId);
-            if (fincaActual == null) {
-                Methods.showAlert(this, "Finca no encontrada").show();
-                return;
-            }
-        }
-
         String cantidadStr = edtCantidad.getText().toString().trim();
         if (cantidadStr.isEmpty() || Integer.parseInt(cantidadStr) <= 0) {
             Methods.showAlert(this, "Ingrese una cantidad válida").show();
@@ -405,22 +408,34 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             return;
         }
 
-        // Feature 6: Support for Placeholder Client (Anonymous Remission)
-        if (fincaActual == null) {
-            fincaActual = new HashMap<>();
-            fincaActual.put("finca_nombre", "CLIENTE POR DEFINIR");
-            fincaActual.put("finca_id", "000");
-            fincaActual.put("direccion", "N/A");
-            fincaActual.put("ciu", "N/A");
-            fincaActual.put("persona_nombre", "POR DEFINIR");
-            fincaActual.put("persona_telefono", "N/A");
-            fincaActual.put("persona_email", "");
-            Log.d("Remision", "Using placeholder client data");
+        // Feature 6: Resolve the client authoritatively from the field at generation time,
+        // so the branch decision and the PDF/email data always agree (single source of truth).
+        String typedId = edtFincaID.getText().toString().trim();
+
+        if (typedId.isEmpty()) {
+            // Empty -> anonymous / nonexistent-client workflow (placeholders + client data into observaciones)
+            fincaActual = null;
+            isAnonymousRemision = true;
+        } else {
+            Map<String, String> resolved = Methods.buscarCliente(typedId);
+            if (resolved == null) {
+                // Typed an ID not in the database -> block; do NOT proceed with empty or placeholders
+                Methods.showAlert(this, "Cliente no encontrado. Revise el ID de la finca.").show();
+                return;
+            }
+            fincaActual = resolved;
+            isAnonymousRemision = false;
         }
 
-        // Feature: Validate Email and Show Office Reminder
-        String email = fincaActual.getOrDefault("persona_email", "").trim();
-        if (email.isEmpty()) {
+        if (isAnonymousRemision) {
+            // Skip email validation and show office reminder immediately
+            showOfficeReminder();
+            return;
+        }
+
+        // Standard Client Flow - Validate Email and Show Office Reminder
+        String email = fincaActual.getOrDefault("persona_email", "");
+        if (email == null || email.trim().isEmpty()) {
             new android.app.AlertDialog.Builder(this)
                     .setTitle("Email Faltante")
                     .setMessage("El email del cliente no está en la base de datos. Por favor solicítelo para enviarle una copia.")
@@ -436,9 +451,10 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                 .setTitle("Recordatorio")
                 .setMessage("No olvide ingresar el correo de la oficina para enviar esta remisión.")
                 .setPositiveButton("Entendido", (dialog, which) -> {
-                    if (fincaActual == null) {
-                        // NEW CLIENT FLOW
+                    if (isAnonymousRemision) {
+                        // NEW / NONEXISTENT CLIENT FLOW: capture client data into observaciones
                         Intent intent = new Intent(this, IngresarDatosClienteActivity.class);
+                        intent.putExtra("tecnicoNumero", tecnicoNumero);
                         clientDataLauncher.launch(intent);
                     } else {
                         // EXISTING CLIENT FLOW
@@ -477,20 +493,23 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             pdfItems.add(m);
         }
 
+        // Feature 6: anonymous remissions render with placeholder finca data
+        Map<String, String> pdfFinca = isAnonymousRemision ? buildPlaceholderFinca() : fincaActual;
+
         File fileT = new File(getFilesDir(), "firma_tecnico_" + consecutivo + ".png");
         File fileC = new File(getFilesDir(), "firma_cliente_" + consecutivo + ".png");
         
         Bitmap bTecnico = BitmapFactory.decodeFile(fileT.getAbsolutePath());
         Bitmap bCliente = BitmapFactory.decodeFile(fileC.getAbsolutePath());
 
-        File pdfFile = Methods.generarPDFRemision(this, consecutivo, fincaActual, pdfItems, userData, bTecnico, bCliente, currentObservaciones);
+        File pdfFile = Methods.generarPDFRemision(this, consecutivo, pdfFinca, pdfItems, userData, bTecnico, bCliente, currentObservaciones);
         
         if (pdfFile != null && pdfFile.exists()) {
             // Deduct from inventories
             Methods.updateWarehouseStock(this, pdfItems);
             // Methods.updateCarStock(this, pdfItems); // Temporarily disabled
 
-            enviarRemisionPorEmail(pdfFile, fileT, fileC, pdfItems);
+            enviarRemisionPorEmail(pdfFile, fileT, fileC, pdfItems, pdfFinca);
         } else {
             // If PDF failed, still clean up sensitive signatures
             if (fileT.exists()) fileT.delete();
@@ -499,14 +518,14 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         }
     }
 
-    private void enviarRemisionPorEmail(File pdfFile, File sigT, File sigC, List<Map<String, String>> pdfItems) {
-        String clientEmail = fincaActual != null ? fincaActual.getOrDefault("persona_email", "") : "";
+    private void enviarRemisionPorEmail(File pdfFile, File sigT, File sigC, List<Map<String, String>> pdfItems, Map<String, String> pdfFinca) {
+        String clientEmail = pdfFinca != null ? pdfFinca.getOrDefault("persona_email", "") : "";
         
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("application/pdf");
         emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{clientEmail});
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión " + consecutivo + " - " + 
-                fincaActual.getOrDefault("finca_nombre", ""));
+                pdfFinca.getOrDefault("finca_nombre", ""));
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto remisión generada.");
 
         Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", pdfFile);
@@ -526,10 +545,10 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                     if (pdfFile.exists()) pdfFile.delete();
                     
                     // SAVE Metadata
-                    Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
-                    
-                    // FLUSH DRAFT and local state
-                    Methods.deleteDraftRemision(this);
+                    Methods.saveRemisionData(this, consecutivo, pdfFinca, pdfItems, userData, false);
+
+                    // FLUSH DRAFT and local state (draft kept on failure so it can be resent)
+                    RemisionDraftCache.clear(tecnicoNumero);
                     itemsAgregados.clear();
                     fincaActual = null;
                     
@@ -549,6 +568,22 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                 })
                 .setCancelable(false)
                 .show();
+    }
+
+    private static boolean isPlaceholderId(String id) {
+        return PLACEHOLDER_FINCA_ID.equals(id);
+    }
+
+    private Map<String, String> buildPlaceholderFinca() {
+        Map<String, String> finca = new HashMap<>();
+        finca.put("finca_nombre", PLACEHOLDER_FINCA_NOMBRE);
+        finca.put("finca_id", PLACEHOLDER_FINCA_ID);
+        finca.put("direccion", "N/A");
+        finca.put("ciu", "N/A");
+        finca.put("persona_nombre", "POR DEFINIR");
+        finca.put("persona_telefono", "N/A");
+        finca.put("persona_email", "");
+        return finca;
     }
 
     public static class ItemRemision {
