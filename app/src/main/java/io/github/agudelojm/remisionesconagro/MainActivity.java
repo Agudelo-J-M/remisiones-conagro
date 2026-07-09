@@ -2,11 +2,14 @@ package io.github.agudelojm.remisionesconagro;
 
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 
 import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AppCompatActivity;
@@ -76,6 +79,13 @@ public class MainActivity extends AppCompatActivity {
         Button btnSalir = findViewById(R.id.btn_salir);
         EditText edtUsername = findViewById(R.id.edt_username);
         EditText edtPassword = findViewById(R.id.edp_password);
+
+        // Make the background logo's off-white/gray box transparent so it matches the screen
+        ImageView imgLogo = findViewById(R.id.img_LogoConagro_Fondo);
+        if (imgLogo != null) {
+            Bitmap raw = BitmapFactory.decodeResource(getResources(), R.drawable.logo_conagro);
+            imgLogo.setImageBitmap(Methods.makeBackgroundTransparent(raw));
+        }
 
         btnLogin.setOnClickListener(v -> {
             String username = edtUsername.getText().toString().trim();

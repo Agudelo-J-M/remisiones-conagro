@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.pdf.PdfDocument;
@@ -1183,6 +1184,30 @@ public class Methods {
         }
     }
 
+    /**
+     * Returns a copy of the bitmap with near-neutral light pixels (the off-white/gray JPEG
+     * background and interior negative space) made transparent, so the logo blends into whatever
+     * white surface it's drawn on (PDF page or screen) instead of showing a mismatched box.
+     */
+    public static Bitmap makeBackgroundTransparent(Bitmap src) {
+        if (src == null) return null;
+        Bitmap out = src.copy(Bitmap.Config.ARGB_8888, true);
+        int w = out.getWidth(), h = out.getHeight();
+        int[] pixels = new int[w * h];
+        out.getPixels(pixels, 0, w, 0, 0, w, h);
+        for (int i = 0; i < pixels.length; i++) {
+            int c = pixels[i];
+            int r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+            int mn = Math.min(r, Math.min(g, b));
+            int mx = Math.max(r, Math.max(g, b));
+            if (mn >= 230 && (mx - mn) <= 18) { // near-neutral light -> treat as background
+                pixels[i] = 0x00000000;
+            }
+        }
+        out.setPixels(pixels, 0, w, 0, 0, w, h);
+        return out;
+    }
+
     public static synchronized File generarPDFRemision(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, Bitmap firmaTecnico, Bitmap firmaCliente, String observaciones) {
         PdfDocument document = new PdfDocument();
         int itemsPerPage = 10;
@@ -1190,7 +1215,7 @@ public class Methods {
 
         // Layout anchors for the footer-overlap guard (Feature 4)
         final float FOOTER_TOP = 750f;
-        final float FIRST_ITEM_Y = 227f;   // baseline of the first item row (after company + finca + table header)
+        final float FIRST_ITEM_Y = 267f;   // baseline of the first item row (after logo band + company + finca + table header)
         final float ROW_HEIGHT = 20f;
         final float CLUSTER_HEIGHT = 275f; // height of the totals + signatures + observaciones block
 
@@ -1210,11 +1235,35 @@ public class Methods {
         titlePaint.setTextSize(18f);
         titlePaint.setFakeBoldText(true);
 
+        // Header logos (decoded once, drawn on every page): Conagro left, Delaval right.
+        Bitmap logoConagro = null, logoDelaval = null;
+        try {
+            logoConagro = makeBackgroundTransparent(BitmapFactory.decodeResource(context.getResources(), R.drawable.logo_conagro));
+            logoDelaval = makeBackgroundTransparent(BitmapFactory.decodeResource(context.getResources(), R.drawable.logo_delaval));
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading PDF header logos", e);
+        }
+
         for (int p = 0; p < totalPages; p++) {
             PdfDocument.PageInfo pageInfo = new PdfDocument.PageInfo.Builder(595, 842, p + 1).create(); // A4
             PdfDocument.Page page = document.startPage(pageInfo);
             Canvas canvas = page.getCanvas();
-            float x = 50, y = 50;
+            float x = 50, y = 90; // header text starts below the logo band
+
+        // Header logos (top band, drawn on every page): Conagro anchored left, Delaval right.
+        if (logoConagro != null) {
+            float maxW = 110, maxH = 55;
+            float scale = Math.min(maxW / logoConagro.getWidth(), maxH / logoConagro.getHeight());
+            float w = logoConagro.getWidth() * scale, h = logoConagro.getHeight() * scale;
+            canvas.drawBitmap(logoConagro, null, new android.graphics.RectF(40, 20, 40 + w, 20 + h), paint);
+        }
+        if (logoDelaval != null) {
+            float maxW = 110, maxH = 55;
+            float scale = Math.min(maxW / logoDelaval.getWidth(), maxH / logoDelaval.getHeight());
+            float w = logoDelaval.getWidth() * scale, h = logoDelaval.getHeight() * scale;
+            float right = 555;
+            canvas.drawBitmap(logoDelaval, null, new android.graphics.RectF(right - w, 20, right, 20 + h), paint);
+        }
 
         // Header (on every page)
         canvas.drawText("CONAGRO S.A.", x, y, titlePaint);
