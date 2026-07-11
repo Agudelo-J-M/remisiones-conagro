@@ -659,6 +659,54 @@ public class Methods {
     }
 
     // ------------------------------------------------------------------
+    // Client search by persona_doc / persona_nombre / finca_nombre.
+    // persona_doc is NOT unique (one persona may own several fincas), so the técnico picks the
+    // exact finca from the suggestion list; the app always resolves to the unique finca_id.
+    // ------------------------------------------------------------------
+
+    /** Case- and accent-insensitive normalization used for client matching. */
+    public static String normalizar(String s) {
+        if (s == null) return "";
+        String n = java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
+        return n.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Returns every client row as a full column map (finca_id, finca_nombre, persona_doc, ...).
+     * Backs the client autocomplete; rows without a finca_id or entirely empty are skipped.
+     */
+    public static List<Map<String, String>> getListaClientes() {
+        List<Map<String, String>> lista = new ArrayList<>();
+        if (clientesSheet == null) return lista;
+        Row header = clientesSheet.getRow(0);
+        if (header == null) return lista;
+
+        for (Row row : clientesSheet) {
+            if (row.getRowNum() == 0) continue;
+            Map<String, String> map = new HashMap<>();
+            boolean anyValue = false;
+            for (Cell cell : header) {
+                String key = dataFormatter.formatCellValue(cell);
+                if (key.isEmpty()) continue;
+                String val = dataFormatter.formatCellValue(row.getCell(cell.getColumnIndex()));
+                map.put(key, val);
+                if (!val.isEmpty()) anyValue = true;
+            }
+            if (anyValue && !map.getOrDefault("finca_id", "").isEmpty()) {
+                lista.add(map);
+            }
+        }
+        return lista;
+    }
+
+    /** Exact, unique client resolution by finca_id (the authoritative lookup used at commit). */
+    public static Map<String, String> buscarClientePorFincaId(String fincaId) {
+        if (fincaId == null || fincaId.trim().isEmpty()) return null;
+        return buscarCliente(fincaId.trim());
+    }
+
+    // ------------------------------------------------------------------
     // Consecutivo (sequential referral numbering)
     // Format: <técnico número, min 2 digits><6-digit sequence>, e.g. 03000001.
     // Counter is stored per técnico número in app_config.json under "consecutivos".
@@ -1281,7 +1329,7 @@ public class Methods {
         canvas.drawText("PÁGINA " + (p + 1) + " DE " + totalPages, 400, y + 20, paint);
 
         y += 30;
-        canvas.drawText("ID FINCA: " + fincaData.getOrDefault("finca_id", ""), x, y, paint);
+        canvas.drawText("DOCUMENTO: " + fincaData.getOrDefault("persona_doc", ""), x, y, paint);
         canvas.drawText("FINCA: " + fincaData.getOrDefault("finca_nombre", ""), 200, y, paint); // Corrected mapping
         y += 15;
         canvas.drawText("CIUDAD: " + fincaData.getOrDefault("ciu", ""), x, y, paint); // Added Ciudad

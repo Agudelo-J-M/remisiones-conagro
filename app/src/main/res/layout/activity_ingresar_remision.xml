@@ -36,7 +36,7 @@
             android:id="@+id/tvw_LabelFincaID_Ingresar_Remision"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="ID Finca"
+            android:text="Documento"
             android:textStyle="bold" />
 
         <TextView
@@ -52,7 +52,7 @@
         android:id="@+id/edt_FincaID_Ingresar_Remision"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:hint="Ingrese ID Finca"
+        android:hint="Documento, nombre o finca"
         android:inputType="text"
         android:completionThreshold="1"
         app:layout_constraintEnd_toEndOf="parent"

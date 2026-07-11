@@ -53,6 +53,14 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     private String consecutivo = "";
     private String currentObservaciones = "Sin observaciones";
 
+    // Client search: técnico searches by persona_doc / persona_nombre / finca_nombre, but the app
+    // resolves to the unique finca_id. All clients are preloaded once to filter in-memory.
+    private List<Map<String, String>> allClientes = new ArrayList<>();
+    private String selectedFincaId = null;
+    // The persona_doc shown in the field for the current selection. A manual edit that changes the
+    // field away from this value invalidates the selection. Set only by tapping a suggestion.
+    private String selectedDoc = null;
+
     // Feature 6: placeholder client used for anonymous / nonexistent-client remissions
     private static final String PLACEHOLDER_FINCA_ID = "000";
     private static final String PLACEHOLDER_FINCA_NOMBRE = "CLIENTE POR DEFINIR";
@@ -159,12 +167,15 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             actualizarTabla();
         }
 
-        // Never restore the placeholder into a new session; the watcher resolves the name.
+        // Never restore the placeholder into a new session. Re-resolve by the unique finca_id and
+        // show persona_doc in the field (selecciona re-establishes the state + label).
         if (savedFinca != null) {
             String id = savedFinca.getOrDefault("finca_id", "");
-            if (!isPlaceholderId(id)) {
-                edtFincaID.setText(id, false);
-                edtFincaID.setSelection(id.length());
+            if (!isPlaceholderId(id) && !id.isEmpty()) {
+                Map<String, String> cliente = Methods.buscarClientePorFincaId(id);
+                if (cliente != null) {
+                    seleccionarCliente(cliente);
+                }
             }
         }
     }
@@ -204,10 +215,9 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         btnFinalizarRemision = findViewById(R.id.btn_Finalizar_Remision_Ingresar_Remision);
         tlyTablaDatos = findViewById(R.id.tly_TablaDatos_Ingresar_Remision);
 
-        // Set up Autocomplete
-        ArrayAdapter<String> fincaAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_dropdown_item_1line, Methods.getListaFincas());
-        edtFincaID.setAdapter(fincaAdapter);
+        // Set up client Autocomplete (search by documento / nombre / finca, display "nombre - finca")
+        allClientes = Methods.getListaClientes();
+        edtFincaID.setAdapter(new ClienteAdapter(this, allClientes));
 
         ArrayAdapter<String> productAdapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_dropdown_item_1line, Methods.getListaProductos());
@@ -215,26 +225,37 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     }
 
     private void setupListeners() {
-        // Feature 6: Invalidate the cached client the moment the field no longer matches it,
-        // so a deleted/edited ID can never carry stale finca data into the PDF or email.
-        // Guarded so that programmatic setText(id) after a successful lookup does NOT wipe it.
+        // Lightweight: typing never searches or auto-selects (that would rescan 2400+ rows per
+        // keystroke and could lock onto a prefix match). A client is committed only by tapping a
+        // suggestion; any edit that moves the field away from the selected document drops it.
         edtFincaID.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override
             public void afterTextChanged(Editable s) {
-                // Live client resolution: refresh the name label as the ID changes
-                mostrarNombreFinca(s.toString().trim());
+                String text = s.toString().trim();
+                if (selectedFincaId != null && !text.equals(selectedDoc)) {
+                    limpiarSeleccion();
+                }
+                if (selectedFincaId == null) {
+                    if (text.isEmpty()) {
+                        mostrarLabelSinRegistrar();
+                    } else {
+                        mostrarLabelSeleccione();
+                    }
+                }
                 saveDraft();
             }
         });
 
-        // Autocomplete selection: clean the field down to just the ID; the watcher resolves the name
+        // Suggestion picked: resolve to the exact finca and show persona_doc in the field.
         edtFincaID.setOnItemClickListener((parent, view, position, id) -> {
-            String selected = (String) parent.getItemAtPosition(position);
-            String fincaId = selected.split(" - ")[0].trim();
-            edtFincaID.setText(fincaId, false);
-            edtFincaID.setSelection(fincaId.length());
+            Object obj = parent.getItemAtPosition(position);
+            if (obj instanceof Map) {
+                //noinspection unchecked
+                seleccionarCliente((Map<String, String>) obj);
+                saveDraft();
+            }
         });
 
         // Search Product Name when user selects an item or finishes inputting Ref
@@ -266,20 +287,40 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     }
 
     /**
-     * Resolves the finca for the given ID and updates the name label live, WITHOUT rewriting the
-     * field text. Shows the matching client name, or "Cliente sin registrar" when empty/unknown.
+     * Suggestion picked from the dropdown — the ONLY way a client is committed. selectedDoc is set
+     * before setText so the watcher recognizes the programmatic change and keeps the selection.
      */
-    private void mostrarNombreFinca(String query) {
-        Map<String, String> resolved = query.isEmpty() ? null : Methods.buscarCliente(query);
-        if (resolved != null) {
-            fincaActual = resolved;
-            tvwNombreFinca.setText(resolved.getOrDefault("finca_nombre", "Finca encontrada"));
-            tvwNombreFinca.setTextColor(getResources().getColor(R.color.blue));
-        } else {
-            fincaActual = null;
-            tvwNombreFinca.setText("Cliente sin registrar");
-            tvwNombreFinca.setTextColor(Color.GRAY);
-        }
+    private void seleccionarCliente(Map<String, String> cliente) {
+        String doc = cliente.getOrDefault("persona_doc", "");
+        selectedDoc = doc;
+        fincaActual = cliente;
+        selectedFincaId = cliente.getOrDefault("finca_id", "");
+        isAnonymousRemision = false;
+
+        edtFincaID.setText(doc, false);
+        edtFincaID.setSelection(doc.length());
+
+        String pnom = cliente.getOrDefault("persona_nombre", "");
+        String fnom = cliente.getOrDefault("finca_nombre", "");
+        String label = pnom.isEmpty() ? fnom : (fnom.isEmpty() ? pnom : pnom + " - " + fnom);
+        tvwNombreFinca.setText(label);
+        tvwNombreFinca.setTextColor(getResources().getColor(R.color.blue));
+    }
+
+    private void limpiarSeleccion() {
+        fincaActual = null;
+        selectedFincaId = null;
+        selectedDoc = null;
+    }
+
+    private void mostrarLabelSinRegistrar() {
+        tvwNombreFinca.setText("Cliente sin registrar");
+        tvwNombreFinca.setTextColor(Color.GRAY);
+    }
+
+    private void mostrarLabelSeleccione() {
+        tvwNombreFinca.setText("Seleccione un cliente de la lista");
+        tvwNombreFinca.setTextColor(Color.rgb(200, 120, 0));
     }
 
     private void buscarYMostrarProducto(String query) {
@@ -425,23 +466,23 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             return;
         }
 
-        // Feature 6: Resolve the client authoritatively from the field at generation time,
-        // so the branch decision and the PDF/email data always agree (single source of truth).
-        String typedId = edtFincaID.getText().toString().trim();
+        // Resolve the client authoritatively at generation time so the branch decision and the
+        // PDF/email data always agree. Identity is the unique finca_id, never persona_doc (shared).
+        String typed = edtFincaID.getText().toString().trim();
 
-        if (typedId.isEmpty()) {
+        if (typed.isEmpty()) {
             // Empty -> anonymous / nonexistent-client workflow (placeholders + client data into observaciones)
             fincaActual = null;
             isAnonymousRemision = true;
-        } else {
-            Map<String, String> resolved = Methods.buscarCliente(typedId);
-            if (resolved == null) {
-                // Typed an ID not in the database -> block; do NOT proceed with empty or placeholders
-                Methods.showAlert(this, "Cliente no encontrado. Revise el ID de la finca.").show();
-                return;
-            }
-            fincaActual = resolved;
+        } else if (selectedFincaId != null && fincaActual != null && typed.equals(selectedDoc)) {
+            // A client is valid only when it was explicitly chosen from the suggestions and the field
+            // still shows that selection's document. fincaActual is the authoritative Datos App record,
+            // so the PDF/email use the canonical persona_doc, never raw typed text.
             isAnonymousRemision = false;
+        } else {
+            // Text typed but no matching selection -> force an explicit pick (no prefix auto-lock).
+            Methods.showAlert(this, "Seleccione un cliente de la lista de sugerencias.").show();
+            return;
         }
 
         if (isAnonymousRemision) {
@@ -613,6 +654,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         Map<String, String> finca = new HashMap<>();
         finca.put("finca_nombre", PLACEHOLDER_FINCA_NOMBRE);
         finca.put("finca_id", PLACEHOLDER_FINCA_ID);
+        finca.put("persona_doc", PLACEHOLDER_FINCA_ID);
         finca.put("direccion", "N/A");
         finca.put("ciu", "N/A");
         finca.put("persona_nombre", "POR DEFINIR");
