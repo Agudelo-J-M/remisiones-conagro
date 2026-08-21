@@ -13,3 +13,5 @@
 .externalNativeBuild
 .cxx
 local.properties
+# Private session handoff log for Claude Code — not shared with the team/client.
+/CLAUDE.md

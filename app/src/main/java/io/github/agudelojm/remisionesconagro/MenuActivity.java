@@ -49,6 +49,10 @@ public class MenuActivity extends AppCompatActivity {
             return;
         }
 
+        // Daily inventory web sync (R1–R5). onCreate only runs on a fresh login (returning from
+        // a sub-screen uses onResume), so this fires once per login as required.
+        InventarioSync.runDailySyncIfNeeded(this, userData.get("numero"));
+
         // Set Welcome Message
         TextView tvwBienvenida = findViewById(R.id.tvw_bienvenida);
         String nombre = userData.getOrDefault("nombre", "");

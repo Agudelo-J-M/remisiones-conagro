@@ -13,6 +13,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -62,13 +63,21 @@ public class ActualizarDatos {
             
             String line;
             int rowCount = 0;
+            char delimiter = ',';
+            boolean delimiterDetected = false;
             while ((line = reader.readLine()) != null) {
-                // Split by comma or semicolon depending on CSV style
-                String[] columns = line.split("[,;]");
+                // Detect the delimiter (comma or semicolon) once, from the header row.
+                if (!delimiterDetected) {
+                    delimiter = detectCsvDelimiter(line);
+                    delimiterDetected = true;
+                }
+                // Quote-aware parse: a quoted field can itself contain the delimiter
+                // (e.g. a product "nombre" with commas), so never use a naive split.
+                List<String> columns = parseCsvLine(line, delimiter);
                 Row row = sheet.createRow(rowCount++);
-                for (int i = 0; i < columns.length; i++) {
+                for (int i = 0; i < columns.size(); i++) {
                     Cell cell = row.createCell(i);
-                    cell.setCellValue(columns[i].replace("\"", "").trim());
+                    cell.setCellValue(columns.get(i));
                 }
             }
             
@@ -188,5 +197,63 @@ public class ActualizarDatos {
             }
         }
         return true;
+    }
+
+    /**
+     * Detects whether a CSV line is comma- or semicolon-delimited by counting each
+     * candidate outside of quoted sections. Defaults to comma on a tie.
+     */
+    private static char detectCsvDelimiter(String line) {
+        int commas = 0, semis = 0;
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                inQuotes = !inQuotes;
+            } else if (!inQuotes && c == ',') {
+                commas++;
+            } else if (!inQuotes && c == ';') {
+                semis++;
+            }
+        }
+        return (semis > commas) ? ';' : ',';
+    }
+
+    /**
+     * Parses a single CSV line into fields, honouring RFC-4180 quoting: quoted fields may
+     * contain the delimiter, and a doubled quote ("") inside a quoted field is a literal
+     * quote. Each returned field is trimmed. This replaces the previous naive split, which
+     * corrupted rows where a text field (e.g. "nombre") contained the delimiter.
+     */
+    private static List<String> parseCsvLine(String line, char delimiter) {
+        List<String> fields = new ArrayList<>();
+        StringBuilder sb = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (inQuotes) {
+                if (c == '"') {
+                    if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                        sb.append('"'); // escaped quote
+                        i++;
+                    } else {
+                        inQuotes = false; // closing quote
+                    }
+                } else {
+                    sb.append(c);
+                }
+            } else {
+                if (c == '"') {
+                    inQuotes = true;
+                } else if (c == delimiter) {
+                    fields.add(sb.toString().trim());
+                    sb.setLength(0);
+                } else {
+                    sb.append(c);
+                }
+            }
+        }
+        fields.add(sb.toString().trim());
+        return fields;
     }
 }

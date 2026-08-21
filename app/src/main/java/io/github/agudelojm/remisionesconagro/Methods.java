@@ -714,14 +714,79 @@ public class Methods {
     // ------------------------------------------------------------------
 
     /** Zero-pads the técnico prefix (2 digits min) and the 6-digit sequence: (3, 1) -> "03000001". */
-    public static String formatConsecutivo(String tecnicoNumero, int seq) {
-        String prefix;
+    /**
+     * Formats a técnico/bodega número to a 2-digit prefix (3 -> "03"). Falls back to the
+     * trimmed raw value when it isn't an integer. Single source of truth shared by the
+     * consecutivo prefix and the bodega code used by the inventory web sync (R3).
+     */
+    public static String format2Digitos(String numero) {
         try {
-            prefix = String.format(Locale.getDefault(), "%02d", Integer.parseInt(tecnicoNumero.trim()));
+            return String.format(Locale.getDefault(), "%02d", Integer.parseInt(numero.trim()));
         } catch (Exception e) {
-            prefix = tecnicoNumero != null ? tecnicoNumero.trim() : "";
+            return numero != null ? numero.trim() : "";
         }
-        return prefix + String.format(Locale.getDefault(), "%06d", seq);
+    }
+
+    public static String formatConsecutivo(String tecnicoNumero, int seq) {
+        return format2Digitos(tecnicoNumero) + String.format(Locale.getDefault(), "%06d", seq);
+    }
+
+    /** Reads app_config.json into a JSONObject (empty object if missing/unreadable). */
+    private static JSONObject readAppConfig(Context context) {
+        try {
+            File file = new File(context.getFilesDir(), "app_config.json");
+            if (!file.exists()) return new JSONObject();
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] data = new byte[(int) file.length()];
+                fis.read(data);
+                return new JSONObject(new String(data, "UTF-8"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error reading app_config.json", e);
+            return new JSONObject();
+        }
+    }
+
+    /** Persists a JSONObject back to app_config.json. */
+    private static void writeAppConfig(Context context, JSONObject json) {
+        try {
+            File file = new File(context.getFilesDir(), "app_config.json");
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(json.toString().getBytes("UTF-8"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error writing app_config.json", e);
+        }
+    }
+
+    /** The 2-digit bodega code the inventory was last synced for (R3). "" if never synced. */
+    public static synchronized String getBodegaCodigo(Context context) {
+        return readAppConfig(context).optString("bodegaCodigo", "");
+    }
+
+    public static synchronized void setBodegaCodigo(Context context, String codigo) {
+        JSONObject json = readAppConfig(context);
+        try {
+            json.put("bodegaCodigo", codigo);
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving bodegaCodigo", e);
+        }
+        writeAppConfig(context, json);
+    }
+
+    /** Local date (yyyy-MM-dd) of the last completed daily sync (R4). "" if never. */
+    public static synchronized String getLastSyncDate(Context context) {
+        return readAppConfig(context).optString("lastSyncDate", "");
+    }
+
+    public static synchronized void setLastSyncDate(Context context, String date) {
+        JSONObject json = readAppConfig(context);
+        try {
+            json.put("lastSyncDate", date);
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving lastSyncDate", e);
+        }
+        writeAppConfig(context, json);
     }
 
     /** Returns the last-used sequence stored for this técnico (0 if none set). */
