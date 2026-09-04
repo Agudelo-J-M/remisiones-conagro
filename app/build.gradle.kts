@@ -10,7 +10,7 @@ val localProperties = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 val inventarioApiKey: String = localProperties.getProperty("INVENTARIO_API_KEY", "")
-// R5 — Datos App.xlsx endpoint (does not exist yet). Blank until the client provides it.
+// R5 — Datos App database endpoint (one CSV table per request). Blank URL = feature off.
 val datosAppUrl: String = localProperties.getProperty("DATOS_APP_URL", "")
 val datosAppKey: String = localProperties.getProperty("DATOS_APP_KEY", "")
 
@@ -31,9 +31,8 @@ android {
         buildConfigField("String", "INVENTARIO_BASE_URL", "\"https://conagro.com.co/reportes-api/get_reporte.php\"")
         buildConfigField("String", "INVENTARIO_API_KEY", "\"$inventarioApiKey\"")
         // --- Datos App web sync (R5) ---
-        // TODO(endpoint): the Datos App.xlsx endpoint does not exist yet. Fill DATOS_APP_URL
-        // (and DATOS_APP_KEY if required) in local.properties when the client provides them;
-        // everything else in InventarioSync.fetchDatosAppOrNull() is already wired.
+        // Base URL only; InventarioSync appends "?tabla=<table>&key=..." per request and
+        // reassembles the four CSVs into the "Datos App.xlsx" workbook.
         buildConfigField("String", "DATOS_APP_URL", "\"$datosAppUrl\"")
         buildConfigField("String", "DATOS_APP_KEY", "\"$datosAppKey\"")
     }

@@ -434,6 +434,47 @@ public class Methods {
     }
 
     /**
+     * Silently re-reads "Datos App.xlsx" from internal storage and re-maps the four sheets.
+     *
+     * Needed by the web sync (R5): {@link #initializeData} runs in MainActivity, i.e. BEFORE
+     * login, while the sync lands a fresh file AFTER login (MenuActivity). Without this the
+     * técnico would keep working against the previous session's clientes/productos/tarifas
+     * until the app was restarted. Unlike initializeData there is no loading spinner and no
+     * "Éxito leyendo Exceles" alert, so the refresh is invisible.
+     *
+     * The in-memory sheets are swapped only if the new workbook loads with all four sheets
+     * present; otherwise the running session is left untouched.
+     *
+     * @return true if the sheets were refreshed.
+     */
+    public static synchronized boolean reloadDatosApp(Context context) {
+        try {
+            XSSFWorkbook wb = loadWorkbookFromFile(context, "Datos App.xlsx");
+            if (wb == null) return false;
+
+            Sheet tecnicos = wb.getSheet("Tecnicos");
+            Sheet productos = wb.getSheet("Productos");
+            Sheet clientes = wb.getSheet("Clientes");
+            Sheet tarifas = wb.getSheet("Tarifas Mantenimiento");
+            if (tecnicos == null || productos == null || clientes == null || tarifas == null) {
+                Log.w(TAG, "Reloaded 'Datos App.xlsx' is missing sheets; keeping current data.");
+                return false;
+            }
+
+            datosAppWb = wb;
+            tecnicosSheet = tecnicos;
+            productosSheet = productos;
+            clientesSheet = clientes;
+            tarifasMantenimientoSheet = tarifas;
+            Log.d(TAG, "Datos App.xlsx reloaded in place after web sync.");
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Error reloading Datos App.xlsx", e);
+            return false;
+        }
+    }
+
+    /**
      * Returns the global DataFormatter for consistent cell reading.
      */
     public static DataFormatter getDataFormatter() {
@@ -785,6 +826,26 @@ public class Methods {
             json.put("lastSyncDate", date);
         } catch (Exception e) {
             Log.e(TAG, "Error saving lastSyncDate", e);
+        }
+        writeAppConfig(context, json);
+    }
+
+    /**
+     * Local date (yyyy-MM-dd) of the last completed "Datos App.xlsx" web sync (R5). "" if never.
+     * Deliberately independent from {@link #getLastSyncDate}: the bodega CSV and the database
+     * are different files on different endpoints, so a failure of one must not consume the
+     * other's daily attempt.
+     */
+    public static synchronized String getLastDatosAppSyncDate(Context context) {
+        return readAppConfig(context).optString("lastDatosAppSyncDate", "");
+    }
+
+    public static synchronized void setLastDatosAppSyncDate(Context context, String date) {
+        JSONObject json = readAppConfig(context);
+        try {
+            json.put("lastDatosAppSyncDate", date);
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving lastDatosAppSyncDate", e);
         }
         writeAppConfig(context, json);
     }

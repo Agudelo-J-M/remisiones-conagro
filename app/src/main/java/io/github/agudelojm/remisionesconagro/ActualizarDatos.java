@@ -202,8 +202,11 @@ public class ActualizarDatos {
     /**
      * Detects whether a CSV line is comma- or semicolon-delimited by counting each
      * candidate outside of quoted sections. Defaults to comma on a tie.
+     *
+     * Package-private so {@link InventarioSync} can reuse it on the CSVs it downloads from
+     * the Datos App endpoint (R5) instead of keeping a second CSV implementation.
      */
-    private static char detectCsvDelimiter(String line) {
+    static char detectCsvDelimiter(String line) {
         int commas = 0, semis = 0;
         boolean inQuotes = false;
         for (int i = 0; i < line.length(); i++) {
@@ -224,8 +227,11 @@ public class ActualizarDatos {
      * contain the delimiter, and a doubled quote ("") inside a quoted field is a literal
      * quote. Each returned field is trimmed. This replaces the previous naive split, which
      * corrupted rows where a text field (e.g. "nombre") contained the delimiter.
+     *
+     * Package-private so {@link InventarioSync} can reuse it on the CSVs it downloads from
+     * the Datos App endpoint (R5) instead of keeping a second CSV implementation.
      */
-    private static List<String> parseCsvLine(String line, char delimiter) {
+    static List<String> parseCsvLine(String line, char delimiter) {
         List<String> fields = new ArrayList<>();
         StringBuilder sb = new StringBuilder();
         boolean inQuotes = false;

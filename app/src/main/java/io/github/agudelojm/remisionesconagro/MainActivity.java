@@ -62,10 +62,16 @@ public class MainActivity extends AppCompatActivity {
                 alertDialog.show();
             } catch (Exception e) {
                 Log.e(TAG, "Error updating data from URI", e);
-                Methods.initializeData(this);
+                // The manual import failed: fall back to the server copy before loading.
+                InventarioSync.runDatosAppSyncIfNeeded(this, () -> Methods.initializeData(this));
             }
         } else {
-            Methods.initializeData(this);
+            // Refresh the database from the server BEFORE login is possible (R5), so a técnico
+            // who was just added on the server is not blocked by a local file that predates
+            // them. On a phone that already has a database this returns at once and the fresh
+            // sheets swap themselves in a moment later; on a fresh install it waits for the
+            // download, since there would otherwise be nothing to log in against.
+            InventarioSync.runDatosAppSyncIfNeeded(this, () -> Methods.initializeData(this));
         }
 
         setupUI();
