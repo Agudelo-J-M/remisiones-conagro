@@ -54,8 +54,11 @@ public class RechazarInventarioBodegaActivity extends AppCompatActivity {
         // 1. Prepare Email
         Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
         emailIntent.setType("*/*");
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
-        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Rechazo de Inventario - " + 
+        // Office address from the Tecnicos sheet ("CORREO OFICINA"); left empty for the técnico
+        // to type when the server has no value for them.
+        emailIntent.putExtra(Intent.EXTRA_EMAIL,
+                Methods.buildEmailRecipients(Methods.getCorreoOficina(userData)));
+        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Rechazo de Inventario - " +
                 (userData != null ? userData.getOrDefault("nombre", "") : ""));
         
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Motivo de rechazo: " + motivo);

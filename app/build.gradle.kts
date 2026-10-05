@@ -54,6 +54,16 @@ android {
     buildFeatures {
         buildConfig = true
     }
+
+    testOptions {
+        unitTests {
+            // Host-side unit tests run against a stubbed android.jar whose methods throw by
+            // default. Returning defaults instead lets tests cover code paths that log —
+            // e.g. validateCredentials' missing-column warning and its exception branch —
+            // without mocking android.util.Log at every call site. Affects unit tests only.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {

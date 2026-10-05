@@ -1,0 +1,5 @@
+NUMERO;CEDULA;1 APELLIDO;2 APELLIDO;NOMBRES;CORREO;CORREO OFICINA
+1;1000000001;PEREZ;GOMEZ;ANA MARIA;ana.perez@example.com;ventas.norte@example.com
+3;1000000002;LOPEZ;DIAZ;CARLOS;carlos.lopez@example.com;
+7;1000000003;GOMEZ, JR;SOTO;LUIS FERNANDO;luis.gomez@example.com;ventas.sur@example.com
+12;1000000004;RUIZ;MORA;SOFIA;sofia.ruiz@example.com;ventas.centro@example.com

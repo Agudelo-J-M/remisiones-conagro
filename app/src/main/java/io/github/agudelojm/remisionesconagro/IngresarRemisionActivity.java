@@ -137,8 +137,13 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         loadMantenimientos();
 
         // Consecutivo is assigned at commit time (see ejecutarGeneracionPDF), not on screen open,
-        // so an abandoned remisión never burns a number. Until then this is only a draft.
-        tvwTitulo.setText(getString(R.string.ingresar_remisi_n) + " (Borrador)");
+        // so an abandoned remisión never burns a number. The title peeks the number that WOULD
+        // be assigned without consuming it — hence it stays marked "Borrador": if the técnico
+        // copies it onto paper and then abandons the remisión, the next one takes that number.
+        // No need to re-check isConsecutivoInicializado: the gate above returns when it is not.
+        String proximo = Methods.peekProximoConsecutivo(this, tecnicoNumero);
+        tvwTitulo.setText(getString(R.string.ingresar_remisi_n)
+                + (proximo != null ? " (Borrador " + proximo + ")" : " (Borrador)"));
 
         // Feature 1: Load draft if exists
         loadDraft();
@@ -504,23 +509,35 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * The office address is filled into the email automatically from the "CORREO OFICINA"
+     * column, so this reminder is only worth showing when we do not have it: a técnico whose
+     * cell is blank on the server, or a phone still on a database saved before that column
+     * existed. In both cases the técnico still has to type it, exactly as before.
+     */
     private void showOfficeReminder() {
+        if (!Methods.getCorreoOficina(userData).isEmpty()) {
+            continuarTrasRecordatorio();
+            return;
+        }
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Recordatorio")
                 .setMessage("No olvide ingresar el correo de la oficina para enviar esta remisión.")
-                .setPositiveButton("Entendido", (dialog, which) -> {
-                    if (isAnonymousRemision) {
-                        // NEW / NONEXISTENT CLIENT FLOW: capture client data into observaciones
-                        Intent intent = new Intent(this, IngresarDatosClienteActivity.class);
-                        intent.putExtra("tecnicoNumero", tecnicoNumero);
-                        clientDataLauncher.launch(intent);
-                    } else {
-                        // EXISTING CLIENT FLOW
-                        Intent intent = new Intent(this, ObservacionesActivity.class);
-                        observacionesLauncher.launch(intent);
-                    }
-                })
+                .setPositiveButton("Entendido", (dialog, which) -> continuarTrasRecordatorio())
                 .show();
+    }
+
+    private void continuarTrasRecordatorio() {
+        if (isAnonymousRemision) {
+            // NEW / NONEXISTENT CLIENT FLOW: capture client data into observaciones
+            Intent intent = new Intent(this, IngresarDatosClienteActivity.class);
+            intent.putExtra("tecnicoNumero", tecnicoNumero);
+            clientDataLauncher.launch(intent);
+        } else {
+            // EXISTING CLIENT FLOW
+            Intent intent = new Intent(this, ObservacionesActivity.class);
+            observacionesLauncher.launch(intent);
+        }
     }
 
     private void pedirFirmaTecnico() {
@@ -593,10 +610,13 @@ public class IngresarRemisionActivity extends AppCompatActivity {
 
     private void enviarRemisionPorEmail(File pdfFile, File sigT, File sigC, List<Map<String, String>> pdfItems, Map<String, String> pdfFinca) {
         String clientEmail = pdfFinca != null ? pdfFinca.getOrDefault("persona_email", "") : "";
-        
+        // Office address comes from the Tecnicos sheet ("CORREO OFICINA"), so the técnico no
+        // longer types it. Blanks are dropped, never sent as an empty recipient.
+        String oficinaEmail = Methods.getCorreoOficina(userData);
+
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("application/pdf");
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{clientEmail});
+        emailIntent.putExtra(Intent.EXTRA_EMAIL, Methods.buildEmailRecipients(clientEmail, oficinaEmail));
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión " + consecutivo + " - " + 
                 pdfFinca.getOrDefault("finca_nombre", ""));
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto remisión generada.");

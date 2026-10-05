@@ -393,15 +393,27 @@ public class EditarRemisionActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * The office address is filled into the email automatically from the "CORREO OFICINA"
+     * column, so this reminder is only worth showing when we do not have it: a técnico whose
+     * cell is blank on the server, or a phone still on a database saved before that column
+     * existed. In both cases the técnico still has to type it, exactly as before.
+     */
     private void showOfficeReminder() {
+        if (!Methods.getCorreoOficina(userData).isEmpty()) {
+            continuarTrasRecordatorio();
+            return;
+        }
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Recordatorio")
                 .setMessage("No olvide ingresar el correo de la oficina para enviar esta remisión.")
-                .setPositiveButton("Entendido", (dialog, which) -> {
-                    Intent intent = new Intent(this, ObservacionesActivity.class);
-                    observacionesLauncher.launch(intent);
-                })
+                .setPositiveButton("Entendido", (dialog, which) -> continuarTrasRecordatorio())
                 .show();
+    }
+
+    private void continuarTrasRecordatorio() {
+        Intent intent = new Intent(this, ObservacionesActivity.class);
+        observacionesLauncher.launch(intent);
     }
 
     private void pedirFirmaTecnico() {
@@ -444,10 +456,13 @@ public class EditarRemisionActivity extends AppCompatActivity {
 
     private void enviarRemisionPorEmail(File pdf, File t, File c, List<Map<String, String>> pdfItems) {
         String clientEmail = fincaActual != null ? fincaActual.getOrDefault("persona_email", "") : "";
-        
+        // Office address comes from the Tecnicos sheet ("CORREO OFICINA"), so the técnico no
+        // longer types it. Blanks are dropped, never sent as an empty recipient.
+        String oficinaEmail = Methods.getCorreoOficina(userData);
+
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("application/pdf");
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{clientEmail});
+        emailIntent.putExtra(Intent.EXTRA_EMAIL, Methods.buildEmailRecipients(clientEmail, oficinaEmail));
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión Editada " + consecutivo);
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto remisión actualizada.");
         emailIntent.putExtra(Intent.EXTRA_STREAM, androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", pdf));

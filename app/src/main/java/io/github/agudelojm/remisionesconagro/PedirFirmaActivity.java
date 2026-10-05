@@ -171,7 +171,10 @@ public class PedirFirmaActivity extends AppCompatActivity {
         Log.d(TAG, "Launching email intent multiple");
         Intent emailIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
         emailIntent.setType("*/*"); // Broadest compatibility
-        emailIntent.putExtra(Intent.EXTRA_EMAIL, new String[]{""});
+        // Office address from the Tecnicos sheet ("CORREO OFICINA"); left empty for the técnico
+        // to type when the server has no value for them.
+        emailIntent.putExtra(Intent.EXTRA_EMAIL,
+                Methods.buildEmailRecipients(Methods.getCorreoOficina(userData)));
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Inventario de Bodega Aceptado - " + (userData != null ? userData.getOrDefault("nombre", "") : ""));
         
         // STANDARD: Most email apps expect EXTRA_TEXT as a String even in ACTION_SEND_MULTIPLE

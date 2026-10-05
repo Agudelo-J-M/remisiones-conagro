@@ -299,9 +299,21 @@ public class Methods {
             int idxAp1 = getColumnIndex(tecnicosSheet, "1 APELLIDO");
             int idxAp2 = getColumnIndex(tecnicosSheet, "2 APELLIDO");
             int idxNumero = getColumnIndex(tecnicosSheet, "NUMERO");
+            // Office address the remisiones must be sent to. Deliberately NOT part of the
+            // required-column check below: a phone still holding a pre-"CORREO OFICINA"
+            // database must keep logging in, it just gets "" and the manual reminder instead.
+            int idxCorreoOficina = getColumnIndex(tecnicosSheet, "CORREO OFICINA");
 
             if (idxCorreo == -1 || idxCedula == -1 || idxNombre == -1 || idxNumero == -1) {
                 throw new Exception("Error de formato: faltan columnas requeridas en hoja Tecnicos");
+            }
+
+            if (idxCorreoOficina == -1) {
+                // Without this line a server-side rename of the header would be invisible: every
+                // técnico silently loses the office recipient and the only symptom is the manual
+                // reminder reappearing, which looks exactly like the intended fallback.
+                Log.w(TAG, "Columna 'CORREO OFICINA' ausente en hoja Tecnicos; "
+                        + "el correo de la oficina no se completará automáticamente.");
             }
 
             for (Row row : tecnicosSheet) {
@@ -317,6 +329,8 @@ public class Methods {
                         data.put("apellidos", dataFormatter.formatCellValue(row.getCell(idxAp1)) + " " + dataFormatter.formatCellValue(row.getCell(idxAp2)));
                         data.put("numero", dataFormatter.formatCellValue(row.getCell(idxNumero)));
                         data.put("cedula", cedulaFile);
+                        data.put("correoOficina", idxCorreoOficina == -1 ? ""
+                                : dataFormatter.formatCellValue(row.getCell(idxCorreoOficina)).trim());
                         return data;
                     }
                 }
@@ -331,6 +345,49 @@ public class Methods {
         data.put("code", "2");
         data.put("message", "Credenciales incorrectas, intente nuevamente.");
         return data;
+    }
+
+    /**
+     * The office address this técnico's remisiones must be sent to, read from the
+     * "CORREO OFICINA" column of the Tecnicos sheet at login.
+     *
+     * Returns "" when the column is absent (a database saved before the column existed) or
+     * the técnico's cell is blank on the server. Callers must treat "" as "ask the técnico to
+     * type it", which is what the app did for everyone before this column existed.
+     */
+    public static String getCorreoOficina(Map<String, String> userData) {
+        if (userData == null) return "";
+        String correo = userData.get("correoOficina");
+        return correo == null ? "" : correo.trim();
+    }
+
+    /**
+     * Builds an Intent.EXTRA_EMAIL array from the given addresses, dropping blanks and
+     * splitting any argument that carries several addresses in one string.
+     *
+     * Blanks are dropped because a missing office address (or a cliente with no email on file)
+     * must leave that recipient out entirely for the técnico to fill in by hand, never
+     * contribute a stray "" that some mail clients render as an invalid recipient chip.
+     *
+     * The split matters because "CORREO OFICINA" is a human-maintained spreadsheet column: the
+     * natural way for the office to add a second address is a comma inside the cell. Passed
+     * whole, "a@x.co, b@x.co" becomes ONE invalid recipient that strict clients silently
+     * refuse — and the técnico would still confirm "Sí, enviado", which commits the consecutivo
+     * and deducts stock, on a mail that never reached the office.
+     */
+    public static String[] buildEmailRecipients(String... addresses) {
+        List<String> recipients = new ArrayList<>();
+        if (addresses != null) {
+            for (String address : addresses) {
+                if (address == null) continue;
+                for (String part : address.split("[;,]")) {
+                    if (!part.trim().isEmpty()) {
+                        recipients.add(part.trim());
+                    }
+                }
+            }
+        }
+        return recipients.toArray(new String[0]);
     }
 
     /**

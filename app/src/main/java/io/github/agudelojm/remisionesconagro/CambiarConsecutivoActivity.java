@@ -3,6 +3,7 @@ package io.github.agudelojm.remisionesconagro;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.InputType;
+import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -35,6 +36,7 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
     // Carried across the async reason/email steps
     private int pendingSeedSeq = -1;
     private String pendingReason = "";
+    private boolean pendingNuncaEnviado = false;
 
     private final ActivityResultLauncher<Intent> observacionesLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
@@ -101,11 +103,17 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
     }
 
     private void refreshDisplay() {
-        if (Methods.isConsecutivoInicializado(this, tecnicoNumero)) {
+        boolean yaConfigurado = Methods.isConsecutivoInicializado(this, tecnicoNumero);
+        if (yaConfigurado) {
             tvwDisplayActual.setText(Methods.peekProximoConsecutivo(this, tecnicoNumero));
         } else {
             tvwDisplayActual.setText("No configurado");
         }
+
+        // "Nunca he enviado una remisión" only makes sense before this técnico has a consecutivo
+        // at all; once one exists, checking it would contradict the app's own records.
+        chkNuncaEnviado.setVisibility(yaConfigurado ? View.GONE : View.VISIBLE);
+        if (yaConfigurado) chkNuncaEnviado.setChecked(false);
     }
 
     /** Step 1: cédula re-authentication. */
@@ -133,8 +141,9 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
     /** Step 2: validate the double entry (or the "never sent" checkbox). */
     private void validateEntry() {
         int lastSeq;
+        boolean nuncaEnviado = chkNuncaEnviado.isChecked();
 
-        if (chkNuncaEnviado.isChecked()) {
+        if (nuncaEnviado) {
             lastSeq = 0; // next will be ...000001
         } else {
             String s1 = edtNuevo.getText().toString().trim();
@@ -179,28 +188,50 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
                     .setTitle("Advertencia")
                     .setMessage("El número ingresado es menor al último registrado (" + floor + "). "
                             + "Esto puede crear remisiones duplicadas que la oficina no podrá diferenciar. ¿Desea continuar?")
-                    .setPositiveButton("Sí, continuar", (d, w) -> proceedToReason(seedSeq))
+                    .setPositiveButton("Sí, continuar", (d, w) -> proceedToReason(seedSeq, nuncaEnviado))
                     .setNegativeButton("No", null)
                     .show();
         } else {
-            proceedToReason(seedSeq);
+            proceedToReason(seedSeq, nuncaEnviado);
         }
     }
 
     /** Step 3: reason via Observaciones, after warning that the office will be notified. */
-    private void proceedToReason(int seedSeq) {
+    private void proceedToReason(int seedSeq, boolean nuncaEnviado) {
         pendingSeedSeq = seedSeq;
+        pendingNuncaEnviado = nuncaEnviado;
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Aviso")
                 .setMessage("Este cambio será notificado a la oficina por correo antes de aplicarse.")
                 .setPositiveButton("Entendido", (d, w) ->
-                        observacionesLauncher.launch(new Intent(this, ObservacionesActivity.class)))
+                        launchReasonScreen(pendingNuncaEnviado ? "primer vez" : null))
                 .setCancelable(false)
                 .show();
     }
 
+    /**
+     * Opens the shared Observaciones screen as a reason prompt. It enforces the mandatory field
+     * itself, and its title/button are overridden because the next step in THIS flow is an
+     * email to the oficina, not a signature.
+     */
+    private void launchReasonScreen(String prellenado) {
+        Intent intent = new Intent(this, ObservacionesActivity.class);
+        intent.putExtra("titulo", "Motivo del cambio");
+        intent.putExtra("subtitulo", "Indique el motivo del cambio de consecutivo (obligatorio):");
+        intent.putExtra("botonTexto", "Siguiente (Notificar)");
+        intent.putExtra("obligatorio", true);
+        if (prellenado != null) intent.putExtra("prellenado", prellenado);
+        observacionesLauncher.launch(intent);
+    }
+
     private void onReasonEntered(String reason) {
-        if (reason == null || reason.trim().isEmpty() || "Sin observaciones".equals(reason)) {
+        // Unreachable backstop. We pass "obligatorio", so ObservacionesActivity rejects both an
+        // empty field and the "Sin observaciones" placeholder on its own screen, with the text
+        // preserved. Rejecting a reason HERE would send the técnico back to step 1 — cédula
+        // re-auth, double entry and the below-floor warning all over again — so this must never
+        // become the normal way an invalid reason is handled.
+        if (reason == null || reason.trim().isEmpty()
+                || ObservacionesActivity.SIN_OBSERVACIONES.equalsIgnoreCase(reason.trim())) {
             Methods.showAlert(this, "Debe ingresar un motivo para el cambio.").show();
             return;
         }
@@ -225,6 +256,10 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
 
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("text/plain");
+        // Office address from the Tecnicos sheet ("CORREO OFICINA"); left empty for the técnico
+        // to type when the server has no value for them.
+        emailIntent.putExtra(Intent.EXTRA_EMAIL,
+                Methods.buildEmailRecipients(Methods.getCorreoOficina(userData)));
         emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Cambio de Consecutivo - Técnico " + tecnicoNumero + " (" + nombre + ")");
         emailIntent.putExtra(Intent.EXTRA_TEXT, body);
         startActivity(Intent.createChooser(emailIntent, "Notificar a oficina..."));
