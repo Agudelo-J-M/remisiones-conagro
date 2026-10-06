@@ -236,6 +236,19 @@ public class ActualizarDatos {
                     return false;
                 }
             }
+
+            // 3. Every table must actually carry data. These four always have rows on the server,
+            // so a header-only sheet is a broken file rather than an empty-but-valid one — and an
+            // empty Tecnicos would otherwise import as a success into a session where nobody can
+            // log in. The web sync filters this earlier and more gently (as NO_DATA: a non-fatal
+            // alert and a retry tomorrow), so in practice only the correo path reaches this check.
+            for (String[] t : DatosAppStore.TABLES) {
+                if (!hasData(tablas.get(t[1]))) {
+                    Methods.showFatalError(context, "Error: La hoja '" + t[1]
+                            + "' no tiene datos en el archivo.");
+                    return false;
+                }
+            }
             return true;
 
         } catch (Exception e) {
@@ -255,11 +268,20 @@ public class ActualizarDatos {
      * su correo" dialog. A data row is required too: these four tables always have rows, so an
      * empty Tecnicos is corruption, not a legitimate state.
      */
+    /**
+     * The "this table carries data" rule, in one place so the import check and the load check
+     * cannot drift. These four tables always have rows on the server, so a header-only table is a
+     * broken file rather than an empty-but-valid one — an empty Tecnicos means nobody can log in.
+     */
+    private static boolean hasData(Tabla tabla) {
+        return tabla != null && tabla.rowCount() >= 1;
+    }
+
     static boolean datosAppTablesAreUsable(Map<String, Tabla> tablas) {
         if (tablas == null) return false;
         for (String[] t : DatosAppStore.TABLES) {
             Tabla tabla = tablas.get(t[1]);
-            if (tabla == null || tabla.rowCount() < 1) {
+            if (!hasData(tabla)) {
                 Log.w(TAG, "Stored table '" + t[1] + "' is missing or has no data rows.");
                 return false;
             }

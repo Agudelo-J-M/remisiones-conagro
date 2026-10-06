@@ -24,7 +24,7 @@ import java.util.Map;
  * import format on the email path.
  *
  * <p><b>Legacy phones.</b> A phone updating from an older build has no store, only
- * {@link #LEGACY_WORKBOOK}. {@link Methods#initializeData} migrates it once (parse, convert, save,
+ * {@link #LEGACY_WORKBOOK}. {@link Methods#loadDatosApp} migrates it once (parse, convert, save,
  * close) and from then on the store is authoritative. The legacy file is left in place rather than
  * deleted: it is small, and keeping it means a downgrade does not strand the técnico with no data.
  */
@@ -59,19 +59,6 @@ final class DatosAppStore {
 
     private static File file(Context context, String base) {
         return new File(dir(context), base + ".csv");
-    }
-
-    /** True when all four tables are present in the store. A partial store counts as absent. */
-    static boolean exists(Context context) {
-        for (String[] t : TABLES) {
-            if (!file(context, t[0]).exists()) return false;
-        }
-        return true;
-    }
-
-    /** True when the técnico has data of SOME kind — the store, or a legacy workbook to migrate. */
-    static boolean hasAnyLocalData(Context context) {
-        return exists(context) || new File(context.getFilesDir(), LEGACY_WORKBOOK).exists();
     }
 
     /**

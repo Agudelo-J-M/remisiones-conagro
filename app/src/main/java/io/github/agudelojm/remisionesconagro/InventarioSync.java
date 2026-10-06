@@ -115,9 +115,14 @@ public class InventarioSync {
      */
     public static void runDatosAppSyncIfNeeded(final Activity activity, final Runnable onReady) {
         final Context appContext = activity.getApplicationContext();
-        // "Has data" means the CSV store OR a legacy workbook still awaiting migration — a phone
-        // updating from an older build must not be treated as a fresh install and made to wait.
-        final boolean hasLocalDatabase = DatosAppStore.hasAnyLocalData(appContext);
+        // Load the stored database HERE, before deciding whether to block, rather than letting
+        // initializeData discover 1.25 s from now that it is unusable: by then this method has
+        // already chosen not to bootstrap, so a corrupt store cost the técnico a failed launch
+        // before the next one could recover. loadDatosApp adopts a healthy store, migrates a
+        // legacy workbook once, and discards anything unusable — so false here means there is
+        // genuinely nothing to work with and the download below must block. It costs ~100 ms of
+        // work initializeData would otherwise repeat, and it is silent either way.
+        final boolean hasLocalDatabase = Methods.loadDatosApp(activity);
 
         if (!shouldSyncDatosApp(appContext, hasLocalDatabase)) {
             onReady.run();

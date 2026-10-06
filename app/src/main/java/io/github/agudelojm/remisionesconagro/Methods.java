@@ -113,7 +113,12 @@ public class Methods {
             }
 
             try {
-                if (!loadDatosApp(currentActivity)) {
+                // Usually already loaded: the sync calls loadDatosApp at app open so it can tell a
+                // usable database from a corrupt one before deciding whether to block on a
+                // download. Only re-read when nothing is live yet — the store and the adopted
+                // tables are written together, so there is never a newer version on disk to pick
+                // up, and re-parsing would just repeat ~100 ms of work.
+                if (tecnicosTabla == null && !loadDatosApp(currentActivity)) {
                     throw new Exception("Base de datos no encontrada");
                 }
 
@@ -185,6 +190,26 @@ public class Methods {
         
         try (FileInputStream fis = new FileInputStream(file)) {
             return loadWorkbook(context, fis);
+        }
+    }
+
+    /**
+     * Like {@link #loadWorkbookFromFile} but silent: it logs instead of raising the app-closing
+     * "Error del excel" dialog.
+     *
+     * Used where a workbook is read before the UI is ready to interrupt the técnico — the legacy
+     * migration runs at app open, where a dialog would land on top of the sync's own
+     * "Descargando base de datos" and where the caller may only hold an application context. The
+     * caller decides what a null means; {@link #initializeData} still owns the user-facing failure.
+     */
+    static XSSFWorkbook loadWorkbookQuietly(Context context, String fileName) {
+        File file = new File(context.getFilesDir(), fileName);
+        if (!file.exists()) return null;
+        try (FileInputStream fis = new FileInputStream(file)) {
+            return new XSSFWorkbook(OPCPackage.open(fis));
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading " + fileName + " quietly: " + e.getMessage());
+            return null;
         }
     }
 
@@ -590,7 +615,10 @@ public class Methods {
         Log.i(TAG, "No store yet; migrating the legacy '" + DatosAppStore.LEGACY_WORKBOOK + "'.");
         XSSFWorkbook wb = null;
         try {
-            wb = loadWorkbookFromFile(context, DatosAppStore.LEGACY_WORKBOOK);
+            // Quietly: this runs at app open now, where the dialog would collide with the sync's
+            // own "Descargando base de datos". Returning false lands the caller on the download,
+            // and initializeData still shows the fatal message if there is nothing to load at all.
+            wb = loadWorkbookQuietly(context, DatosAppStore.LEGACY_WORKBOOK);
             if (wb == null) return false;
             Map<String, Tabla> migradas = DatosAppStore.fromWorkbook(wb);
             if (migradas == null) return false;
