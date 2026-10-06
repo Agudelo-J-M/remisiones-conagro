@@ -115,14 +115,18 @@ public class InventarioSync {
      */
     public static void runDatosAppSyncIfNeeded(final Activity activity, final Runnable onReady) {
         final Context appContext = activity.getApplicationContext();
-        // Load the stored database HERE, before deciding whether to block, rather than letting
-        // initializeData discover 1.25 s from now that it is unusable: by then this method has
-        // already chosen not to bootstrap, so a corrupt store cost the técnico a failed launch
-        // before the next one could recover. loadDatosApp adopts a healthy store, migrates a
-        // legacy workbook once, and discards anything unusable — so false here means there is
-        // genuinely nothing to work with and the download below must block. It costs ~100 ms of
-        // work initializeData would otherwise repeat, and it is silent either way.
-        final boolean hasLocalDatabase = Methods.loadDatosApp(activity);
+        // "Has data" means the CSV store OR a legacy workbook still awaiting migration — a phone
+        // updating from an older build must not be treated as a fresh install and made to wait.
+        //
+        // A file-presence check ON PURPOSE. Actually loading the data here, so that a corrupt store
+        // could be discarded and re-downloaded on this same launch, was tried and reverted: we are
+        // inside onCreate, and the legacy migration this can trigger measured ~1.4 s on a desktop
+        // (parse 1135 + convert 203 + save 49), so several seconds on a phone — freezing onCreate
+        // with no dialog up, on the one launch every técnico hits when they update. The data is read
+        // in Methods.initializeData instead, behind its dialog and after the first frame. Accepted
+        // cost: a present-but-corrupt store is only detected there, so it is discarded on that
+        // launch and the unconditional download that replaces it happens on the next one.
+        final boolean hasLocalDatabase = DatosAppStore.hasAnyLocalData(appContext);
 
         if (!shouldSyncDatosApp(appContext, hasLocalDatabase)) {
             onReady.run();

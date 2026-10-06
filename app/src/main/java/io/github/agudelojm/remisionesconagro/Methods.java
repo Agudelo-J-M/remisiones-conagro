@@ -113,11 +113,14 @@ public class Methods {
             }
 
             try {
-                // Usually already loaded: the sync calls loadDatosApp at app open so it can tell a
-                // usable database from a corrupt one before deciding whether to block on a
-                // download. Only re-read when nothing is live yet — the store and the adopted
-                // tables are written together, so there is never a newer version on disk to pick
-                // up, and re-parsing would just repeat ~100 ms of work.
+                // Reading the database belongs here, not at app open: this runs behind the
+                // "Leyendo Exceles" dialog and after the first frame, which is what keeps the
+                // legacy migration (~1.4 s on a desktop, several seconds on a phone) from freezing
+                // MainActivity.onCreate on the launch after an update.
+                //
+                // Skipped only when tables are already live — an ingest from the correo or the web
+                // sync adopts as it saves, so disk never holds a version newer than memory and
+                // re-parsing would just repeat the work.
                 if (tecnicosTabla == null && !loadDatosApp(currentActivity)) {
                     throw new Exception("Base de datos no encontrada");
                 }

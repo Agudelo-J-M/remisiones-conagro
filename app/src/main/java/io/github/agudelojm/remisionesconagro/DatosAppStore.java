@@ -61,6 +61,30 @@ final class DatosAppStore {
         return new File(dir(context), base + ".csv");
     }
 
+    /** True when all four tables are present in the store. A partial store counts as absent. */
+    static boolean exists(Context context) {
+        for (String[] t : TABLES) {
+            if (!file(context, t[0]).exists()) return false;
+        }
+        return true;
+    }
+
+    /**
+     * True when the técnico has data of SOME kind — the store, or a legacy workbook to migrate.
+     *
+     * <p>Deliberately a file-presence check and nothing more. The web sync calls this at app open to
+     * decide whether to block on a download, and that decision sits in {@code onCreate}: actually
+     * reading the data here was tried and reverted, because the legacy migration it can trigger
+     * costs ~1.4 s on a desktop (so several seconds on a phone) and would freeze {@code onCreate}
+     * with no dialog up, on the one launch every técnico hits when they update. Reading the data is
+     * {@link Methods#initializeData}'s job, where it happens behind the "Leyendo Exceles" dialog and
+     * after the first frame. The cost is that a store which is present but corrupt is only detected
+     * there, one launch before the download can replace it.
+     */
+    static boolean hasAnyLocalData(Context context) {
+        return exists(context) || new File(context.getFilesDir(), LEGACY_WORKBOOK).exists();
+    }
+
     /**
      * Reads the whole store. Returns null if anything is missing or unreadable, so the caller can
      * fall back rather than adopt a half-populated database.
