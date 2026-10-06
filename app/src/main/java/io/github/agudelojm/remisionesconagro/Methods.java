@@ -57,10 +57,17 @@ public class Methods {
     // The four Datos App tables, held as plain strings rather than as a POI workbook. See Tabla
     // for why: the workbook form cost ~100 MB of heap and over a second of UI-thread parsing per
     // copy, and the sync briefly needed two copies at once.
-    private static Tabla tecnicosTabla = null;
-    private static Tabla productosTabla = null;
-    private static Tabla clientesTabla = null;
-    private static Tabla tarifasMantenimientoTabla = null;
+    //
+    // volatile because the readers (validateCredentials, buscarItem, buscarCliente,
+    // getProductoDetails) are not synchronized while adoptDatosApp is. Today every read and write
+    // happens on the main thread — the sync parses on a background thread but posts the adopt back
+    // — so this is belt-and-braces; it is here so that moving the ingest off the UI thread, which
+    // is now cheap enough to be tempting, cannot turn into a silent visibility bug. Each field is
+    // an immutable Tabla, so publishing the reference is all that has to be safe.
+    private static volatile Tabla tecnicosTabla = null;
+    private static volatile Tabla productosTabla = null;
+    private static volatile Tabla clientesTabla = null;
+    private static volatile Tabla tarifasMantenimientoTabla = null;
 
     // Derived autocomplete lists. Rebuilt only when the tables are replaced (see adoptDatosApp),
     // never per screen open: three activities used to rebuild the 4 800-entry producto list in
@@ -563,9 +570,18 @@ public class Methods {
      */
     static synchronized boolean loadDatosApp(Context context) {
         Map<String, Tabla> tablas = DatosAppStore.load(context);
-        if (tablas != null) {
+        if (tablas != null && ActualizarDatos.datosAppTablesAreUsable(tablas)) {
             adoptDatosApp(tablas);
             return tecnicosTabla != null;
+        }
+        if (tablas != null) {
+            // Present but unusable — an empty or truncated CSV. Adopting it would leave every
+            // login failing with "error de formato" and no way out, so throw the store away: that
+            // puts the phone back on the paths that CAN recover (the bootstrap download, which
+            // ignores the daily guard, or the legacy workbook below, or the "abra el archivo desde
+            // su correo" dialog).
+            Log.w(TAG, "Stored database is unusable; discarding it so the next sync can rebuild.");
+            DatosAppStore.discard(context);
         }
 
         File legacy = new File(context.getFilesDir(), DatosAppStore.LEGACY_WORKBOOK);
@@ -580,6 +596,13 @@ public class Methods {
             if (migradas == null) return false;
             closeQuietly(wb);
             wb = null;
+            // Held to the same bar as the store: a legacy workbook that is itself empty or
+            // mis-shaped must reach the fatal "abra el archivo desde su correo" dialog rather than
+            // be adopted into a session where nobody can log in.
+            if (!ActualizarDatos.datosAppTablesAreUsable(migradas)) {
+                Log.w(TAG, "Legacy workbook is unusable; not adopting it.");
+                return false;
+            }
             if (!DatosAppStore.save(context, migradas)) {
                 // Still usable this session even if the store could not be written; the next
                 // launch simply migrates again.
@@ -596,7 +619,7 @@ public class Methods {
     }
 
     /** Closes a workbook, releasing its OPC package and temp files. Never throws. */
-    private static void closeQuietly(XSSFWorkbook wb) {
+    static void closeQuietly(XSSFWorkbook wb) {
         if (wb == null) return;
         try {
             wb.close();

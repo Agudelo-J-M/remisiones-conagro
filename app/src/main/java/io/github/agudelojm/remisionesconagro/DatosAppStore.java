@@ -163,6 +163,23 @@ final class DatosAppStore {
     }
 
     /**
+     * Deletes the store.
+     *
+     * Called when what was read back is present but unusable (an empty or truncated CSV). The data
+     * is a cache of the server's, so throwing it away costs nothing and restores the recovery
+     * paths: with no store, the sync treats the phone as a fresh install and downloads
+     * unconditionally, ignoring the daily guard.
+     */
+    static void discard(Context context) {
+        for (String[] t : TABLES) {
+            File f = file(context, t[0]);
+            if (f.exists() && !f.delete()) {
+                Log.w(TAG, "Could not delete " + f.getName() + " while discarding the store.");
+            }
+        }
+    }
+
+    /**
      * Converts an imported workbook into the four tables. Returns null when a sheet is missing,
      * which the caller reports exactly as the old "falta la hoja requerida" validation did.
      *

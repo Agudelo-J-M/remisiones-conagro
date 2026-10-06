@@ -15,6 +15,7 @@ import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -26,6 +27,31 @@ import java.util.Objects;
 public class ActualizarDatos {
 
     private static final String TAG = "ActualizarDatos";
+
+    /**
+     * Official header names per table, as provided by the client. Declared once so the two checks
+     * that use them — the dialog-raising validation on import and the silent one on load — cannot
+     * drift apart.
+     *
+     * Superset columns are deliberately NOT here: "CORREO OFICINA" (R6) and everything else the
+     * server sends beyond these lists. A database saved before a column existed must keep working;
+     * making a new column required would fire the app-closing fatal dialog on every older file and
+     * on any server rollback.
+     */
+    private static final Map<String, List<String>> REQUIRED_HEADERS = new HashMap<>();
+    static {
+        REQUIRED_HEADERS.put("Tecnicos",
+                Arrays.asList("NUMERO", "CEDULA", "1 APELLIDO", "2 APELLIDO", "NOMBRES", "CORREO"));
+        REQUIRED_HEADERS.put("Productos",
+                Arrays.asList("referencia", "nombre", "seccion", "iva", "activo", "empresa",
+                        "precio_base", "descuento_inservice", "fecha_inicio_vigencia"));
+        REQUIRED_HEADERS.put("Clientes",
+                Arrays.asList("finca_id", "empresa", "direccion", "zona", "ciu", "numero_equipo",
+                        "clase_equipo", "persona_doc", "persona_nombre", "persona_telefono",
+                        "persona_email"));
+        REQUIRED_HEADERS.put("Tarifas Mantenimiento",
+                Arrays.asList("empresa", "referencia", "descripcion", "precio_base", "activo"));
+    }
 
     /**
      * Loads a workbook from a given Uri and triggers the update process after validation.
@@ -58,8 +84,10 @@ public class ActualizarDatos {
             Methods.showFatalError(context, "Error: El archivo de inventario debe empezar por 'INV'.");
             return "Error Nombre";
         }
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(context.getContentResolver().openInputStream(uri)))) {
-            XSSFWorkbook wb = new XSSFWorkbook();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(context.getContentResolver().openInputStream(uri)));
+             // Closed on every exit, like the import path above: nothing retains this workbook
+             // (the inventory is reloaded from disk afterwards), so its package should be released.
+             XSSFWorkbook wb = new XSSFWorkbook()) {
             Sheet sheet = wb.createSheet("Inventario");
             
             String line;
@@ -105,39 +133,49 @@ public class ActualizarDatos {
      * Identifies the workbook type, validates its structure, and saves it if correct.
      */
     private static String processAndValidateWorkbook(Context context, XSSFWorkbook wb, String originalFileName) {
-        // Identify if it's the main database by checking for the "Tecnicos" sheet
-        if (wb.getSheet("Tecnicos") != null) {
-            // Convert to the four plain-string tables and let go of the workbook immediately: the
-            // app's data model is the tables, and holding the POI model alongside them is what used
-            // to cost ~100 MB of heap per copy. Everything downstream is unaffected — the tables
-            // expose the same column-by-name reads the sheets did.
-            Map<String, Tabla> tablas = DatosAppStore.fromWorkbook(wb);
-            if (tablas == null) {
-                Methods.showFatalError(context, "Error: Falta una de las hojas requeridas "
-                        + "(Tecnicos, Productos, Clientes, Tarifas Mantenimiento) en el archivo.");
-                return "Desconocido";
-            }
-            if (ingestDatosAppTables(context, tablas)) {
-                return "Base de Datos";
-            }
-        }
-        // Identify if it's an inventory file (Must start with INV and have correct headers)
-        else if (originalFileName.toUpperCase().startsWith("INV")) {
-            // Delete ANY existing temp file to ensure fresh import
-            File oldTemp = new File(context.getFilesDir(), "Inventario_Temp.xlsx");
-            if (oldTemp.exists()) oldTemp.delete();
+        // This method owns the workbook and closes it on every exit (the finally below), so the
+        // OPC package and its temp files are released rather than left to GC.
+        try {
+            // Identify if it's the main database by checking for the "Tecnicos" sheet
+            if (wb.getSheet("Tecnicos") != null) {
+                // Convert to the four plain-string tables, then close the workbook BEFORE
+                // validating and saving. Holding both costs ~109 MB (POI) on top of the ~8 MB of
+                // tables, and this import is the one remaining place POI touches this data —
+                // releasing it here is what keeps the peak off a low-RAM phone.
+                Map<String, Tabla> tablas = DatosAppStore.fromWorkbook(wb);
+                Methods.closeQuietly(wb);
+                wb = null;
 
-            if (validateInventoryStructure(context, wb)) {
-                Methods.saveWorkbook(context, wb, "Inventario_Temp.xlsx");
-                Methods.setInventarioWbToNull(); // Ensure refresh
-                Methods.setLastInventoryFileName(context, originalFileName);
-                return "Inventario";
+                if (tablas == null) {
+                    Methods.showFatalError(context, "Error: Falta una de las hojas requeridas "
+                            + "(Tecnicos, Productos, Clientes, Tarifas Mantenimiento) en el archivo.");
+                    return "Desconocido";
+                }
+                if (ingestDatosAppTables(context, tablas)) {
+                    return "Base de Datos";
+                }
             }
-        } 
-        else {
-            Methods.showFatalError(context, "Error: El archivo no corresponde a un formato reconocido (Base de Datos o Inventario). El inventario debe empezar por 'INV'.");
+            // Identify if it's an inventory file (Must start with INV and have correct headers)
+            else if (originalFileName.toUpperCase().startsWith("INV")) {
+                // Delete ANY existing temp file to ensure fresh import
+                File oldTemp = new File(context.getFilesDir(), "Inventario_Temp.xlsx");
+                if (oldTemp.exists()) oldTemp.delete();
+
+                if (validateInventoryStructure(context, wb)) {
+                    Methods.saveWorkbook(context, wb, "Inventario_Temp.xlsx");
+                    Methods.setInventarioWbToNull(); // Ensure refresh
+                    Methods.setLastInventoryFileName(context, originalFileName);
+                    return "Inventario";
+                }
+            }
+            else {
+                Methods.showFatalError(context, "Error: El archivo no corresponde a un formato reconocido (Base de Datos o Inventario). El inventario debe empezar por 'INV'.");
+            }
+            return "Desconocido";
+        } finally {
+            // Null on the database path, which already closed it; null-safe either way.
+            Methods.closeQuietly(wb);
         }
-        return "Desconocido";
     }
 
     /**
@@ -193,20 +231,46 @@ public class ActualizarDatos {
             }
 
             // 2. Validate columns for each table with official header names provided by user
-            return validateHeaders(context, tablas.get("Tecnicos"),
-                    Arrays.asList("NUMERO", "CEDULA", "1 APELLIDO", "2 APELLIDO", "NOMBRES", "CORREO")) &&
-                    validateHeaders(context, tablas.get("Productos"),
-                    Arrays.asList("referencia", "nombre", "seccion", "iva", "activo", "empresa", "precio_base", "descuento_inservice", "fecha_inicio_vigencia")) &&
-                    validateHeaders(context, tablas.get("Clientes"),
-                    Arrays.asList("finca_id", "empresa", "direccion", "zona", "ciu", "numero_equipo", "clase_equipo", "persona_doc", "persona_nombre", "persona_telefono", "persona_email")) &&
-                    validateHeaders(context, tablas.get("Tarifas Mantenimiento"),
-                    Arrays.asList("empresa", "referencia", "descripcion", "precio_base", "activo"));
+            for (String[] t : DatosAppStore.TABLES) {
+                if (!validateHeaders(context, tablas.get(t[1]), REQUIRED_HEADERS.get(t[1]))) {
+                    return false;
+                }
+            }
+            return true;
 
         } catch (Exception e) {
             Log.e(TAG, "Exception during validation", e);
             Methods.showFatalError(context, "Error inesperado validando la integridad del archivo.");
             return false;
         }
+    }
+
+    /**
+     * The same structure check without any dialogs, for data read back off the disk rather than
+     * freshly received.
+     *
+     * Needed because a stored table that is present but unusable (an empty or truncated CSV) would
+     * otherwise be adopted as if it were fine, and every login would then fail with "error de
+     * formato" and no way out — where a corrupt workbook used to reach the "abra el archivo desde
+     * su correo" dialog. A data row is required too: these four tables always have rows, so an
+     * empty Tecnicos is corruption, not a legitimate state.
+     */
+    static boolean datosAppTablesAreUsable(Map<String, Tabla> tablas) {
+        if (tablas == null) return false;
+        for (String[] t : DatosAppStore.TABLES) {
+            Tabla tabla = tablas.get(t[1]);
+            if (tabla == null || tabla.rowCount() < 1) {
+                Log.w(TAG, "Stored table '" + t[1] + "' is missing or has no data rows.");
+                return false;
+            }
+            for (String required : REQUIRED_HEADERS.get(t[1])) {
+                if (tabla.columnIndex(required) == -1) {
+                    Log.w(TAG, "Stored table '" + t[1] + "' has no '" + required + "' column.");
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /** Verifies a table exposes every required column, keeping the original per-column message. */

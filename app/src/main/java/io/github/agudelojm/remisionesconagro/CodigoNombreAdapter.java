@@ -20,15 +20,13 @@ import java.util.List;
  * default filter walks every entry on every keystroke and lowercases as it goes — fine for the 392
  * productos this app shipped against, much less so now the server sends 4 863. This one normalizes
  * once at construction, matches the reference by prefix and the name by substring (accent- and
- * case-insensitive, like the client search), and caps the result list: the dropdown can only show a
- * handful of rows, so building thousands is wasted work.
+ * case-insensitive, like the client search), and returns every match — see performFiltering for why
+ * that is safe now that the keys are precomputed.
  *
  * <p>Entries keep the "Ref - Nombre" shape the rest of the flow expects, because
  * {@link Methods#buscarItem} splits the reference back off on " - ".
  */
 public class CodigoNombreAdapter extends ArrayAdapter<String> {
-
-    private static final int MAX_SUGGESTIONS = 50;
 
     private final List<String> todos;
     /** Normalized "ref" and "nombre" halves, parallel to {@link #todos}. */
@@ -47,12 +45,19 @@ public class CodigoNombreAdapter extends ArrayAdapter<String> {
             List<String> out = new ArrayList<>();
             String q = Methods.normalizar(constraint == null ? "" : constraint.toString());
             if (!q.isEmpty()) {
-                // The técnico usually types or scans a reference, so prefix matches come first and
-                // a name match only fills whatever room is left in the dropdown.
-                for (int i = 0; i < todos.size() && out.size() < MAX_SUGGESTIONS; i++) {
+                // EVERY match is returned, not a capped slice. The fields set
+                // completionThreshold="1", so a one-character query matches hundreds of productos;
+                // truncating would silently hide the técnico's item and leave no way to reach it
+                // except guessing more characters. It can be exhaustive because the keys are
+                // normalized once at construction, so a pass over all 4 800 entries is a few
+                // thousand cheap startsWith/contains calls, and the dropdown recycles its rows.
+                //
+                // Reference prefixes come first because that is what the técnico types or scans;
+                // name matches follow, so the likeliest row is at the top either way.
+                for (int i = 0; i < todos.size(); i++) {
                     if (refNorm[i].startsWith(q)) out.add(todos.get(i));
                 }
-                for (int i = 0; i < todos.size() && out.size() < MAX_SUGGESTIONS; i++) {
+                for (int i = 0; i < todos.size(); i++) {
                     if (!refNorm[i].startsWith(q) && nombreNorm[i].contains(q)) out.add(todos.get(i));
                 }
             }

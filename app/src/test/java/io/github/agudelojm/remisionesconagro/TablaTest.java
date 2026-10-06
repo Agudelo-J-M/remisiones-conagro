@@ -229,6 +229,40 @@ public class TablaTest {
         assertEquals("DIRECCION, CON COMA", vuelta.value(2, "nombre"));
     }
 
+    /**
+     * A data row with MORE fields than its header is readable through value(row, col), so the
+     * round-trip must keep those fields. Writing only the header's width used to drop them, which
+     * made fromCsv -> toCsv -> fromCsv lossy for a ragged payload.
+     */
+    @Test
+    public void rowWiderThanTheHeaderSurvivesTheRoundTrip() {
+        Tabla original = Tabla.fromCsv("X", "col1;col2\nA;B;EXTRA");
+
+        assertEquals("EXTRA", original.value(0, 2));
+
+        Tabla vuelta = Tabla.fromCsv("X", original.toCsv());
+
+        assertEquals("EXTRA", vuelta.value(0, 2));
+        assertEquals("A", vuelta.value(0, "col1"));
+        assertEquals("B", vuelta.value(0, "col2"));
+        // The padded header cell is nameless, so it must not become a lookupable column.
+        assertEquals(-1, vuelta.columnIndex(""));
+    }
+
+    /**
+     * All three factories must trim, or a table built one way would not survive its own round-trip
+     * (toCsv writes the raw value, fromCsv trims it back).
+     */
+    @Test
+    public void fromRowsTrimsLikeTheOtherFactories() {
+        Tabla original = Tabla.fromRows("X", Arrays.asList(
+                new String[]{"  col  "}, new String[]{"  padded  "}));
+
+        assertEquals("padded", original.value(0, 0));
+        assertEquals(0, original.columnIndex("col"));
+        assertEquals("padded", Tabla.fromCsv("X", original.toCsv()).value(0, 0));
+    }
+
     /** A semicolon-delimited payload must survive being stored (as commas) and re-read. */
     @Test
     public void semicolonPayloadSurvivesTheStoreRoundTrip() {

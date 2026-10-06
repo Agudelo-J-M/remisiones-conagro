@@ -70,10 +70,19 @@ final class Tabla {
         if (filas == null || filas.isEmpty()) {
             return new Tabla(nombre, new String[0], new String[0][]);
         }
-        String[] headers = filas.get(0);
+        // Trimmed here so all three factories agree: fromCsv and fromSheet already trim, and a
+        // table that trimmed on one route but not another would not survive its own CSV round-trip.
+        String[] headers = trimmed(filas.get(0));
         String[][] rows = new String[filas.size() - 1][];
-        for (int i = 1; i < filas.size(); i++) rows[i - 1] = filas.get(i);
+        for (int i = 1; i < filas.size(); i++) rows[i - 1] = trimmed(filas.get(i));
         return new Tabla(nombre, headers, rows);
+    }
+
+    private static String[] trimmed(String[] fila) {
+        if (fila == null) return new String[0];
+        String[] out = new String[fila.length];
+        for (int i = 0; i < fila.length; i++) out[i] = (fila[i] == null) ? "" : fila[i].trim();
+        return out;
     }
 
     /**
@@ -231,9 +240,16 @@ final class Tabla {
      * shift a whole table by one column.
      */
     String toCsv() {
-        StringBuilder sb = new StringBuilder(Math.max(64, (rows.length + 1) * headers.length * 12));
-        appendCsvRow(sb, headers, headers.length);
-        for (String[] fila : rows) appendCsvRow(sb, fila, headers.length);
+        // The widest row, not headers.length: a payload row with MORE fields than its header is
+        // readable through value(row, col), so writing only the header's width would drop those
+        // fields and make the round-trip lossy. Short rows are padded instead.
+        int width = headers.length;
+        for (String[] fila : rows) {
+            if (fila != null && fila.length > width) width = fila.length;
+        }
+        StringBuilder sb = new StringBuilder(Math.max(64, (rows.length + 1) * Math.max(1, width) * 12));
+        appendCsvRow(sb, headers, width);
+        for (String[] fila : rows) appendCsvRow(sb, fila, width);
         return sb.toString();
     }
 
