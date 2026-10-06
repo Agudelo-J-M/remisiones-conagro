@@ -31,19 +31,35 @@ android {
         buildConfigField("String", "INVENTARIO_BASE_URL", "\"https://conagro.com.co/reportes-api/get_reporte.php\"")
         buildConfigField("String", "INVENTARIO_API_KEY", "\"$inventarioApiKey\"")
         // --- Datos App web sync (R5) ---
-        // Base URL only; InventarioSync appends "?tabla=<table>&key=..." per request and
-        // reassembles the four CSVs into the "Datos App.xlsx" workbook.
+        // Base URL only; InventarioSync appends "?tabla=<table>&key=..." per request and parses
+        // each CSV straight into a Tabla (no workbook is assembled any more — see R7).
         buildConfigField("String", "DATOS_APP_URL", "\"$datosAppUrl\"")
         buildConfigField("String", "DATOS_APP_KEY", "\"$datosAppKey\"")
     }
 
     buildTypes {
         release {
+            // Keep POI intact. Apache POI resolves a lot by reflection (OPCPackage parts, the XSSF
+            // part factories), so shrinking would need a long list of keep rules to avoid failing
+            // only at runtime, on a técnico's phone, when a workbook is opened.
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+
+            // Signed with the DEBUG keystore on purpose. This app is sideloaded to the técnicos'
+            // phones, never published, and Android refuses to install an APK over an existing one
+            // signed by a different key — so sharing one key with every build made so far keeps
+            // updates installable without an uninstall, which would wipe filesDir: the per-técnico
+            // consecutivos in app_config.json, the accepted Inventario.xlsx with its stock
+            // movements, and the saved remisiones.
+            //
+            // Consequences, accepted by the owner: this cannot be published to Play, and
+            // ~/.android/debug.keystore IS now the app's identity — BACK IT UP. If that file is
+            // lost or regenerated (new machine, Studio reset) it comes back with a different key
+            // and no later build will be able to update an existing install.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
