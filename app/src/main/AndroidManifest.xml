@@ -4,11 +4,19 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+        largeHeap: headroom, not a fix. The four Datos App tables are now held as plain strings
+        (see Tabla) instead of as an Apache POI workbook, which is what actually brought this app's
+        peak memory down from ~200 MB to ~10 MB. POI is still used to import a workbook from the
+        correo, and that single parse is the one remaining spike — this flag keeps a low-RAM phone
+        from dying on it. Do not treat it as licence to hold big objects.
+    -->
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
+        android:largeHeap="true"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"

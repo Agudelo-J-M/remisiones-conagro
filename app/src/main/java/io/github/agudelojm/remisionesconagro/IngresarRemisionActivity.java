@@ -74,7 +74,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
                 if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    currentObservaciones = result.getData().getStringExtra("observaciones");
+                    currentObservaciones = result.getData().getStringExtra(ObservacionesActivity.RESULT_OBSERVACIONES);
                     pedirFirmaTecnico();
                 }
             }
@@ -84,7 +84,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
                 if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    currentObservaciones = result.getData().getStringExtra("observaciones");
+                    currentObservaciones = result.getData().getStringExtra(ObservacionesActivity.RESULT_OBSERVACIONES);
                     pedirFirmaTecnico();
                 }
             }
@@ -224,8 +224,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         allClientes = Methods.getListaClientes();
         edtFincaID.setAdapter(new ClienteAdapter(this, allClientes));
 
-        ArrayAdapter<String> productAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_dropdown_item_1line, Methods.getListaProductos());
+        CodigoNombreAdapter productAdapter = new CodigoNombreAdapter(this, Methods.getListaProductos());
         edtProductoRef.setAdapter(productAdapter);
     }
 
@@ -638,7 +637,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                     if (pdfFile.exists()) pdfFile.delete();
                     
                     // SAVE Metadata
-                    Methods.saveRemisionData(this, consecutivo, pdfFinca, pdfItems, userData, false);
+                    Methods.saveRemisionData(this, consecutivo, pdfFinca, pdfItems, userData, false, currentObservaciones);
 
                     // Consume the consecutivo only now that the send is confirmed
                     Methods.commitConsecutivo(this, tecnicoNumero, consecutivo);

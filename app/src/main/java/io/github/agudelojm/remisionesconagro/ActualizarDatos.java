@@ -16,6 +16,7 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -106,11 +107,20 @@ public class ActualizarDatos {
     private static String processAndValidateWorkbook(Context context, XSSFWorkbook wb, String originalFileName) {
         // Identify if it's the main database by checking for the "Tecnicos" sheet
         if (wb.getSheet("Tecnicos") != null) {
-            if (validateMainDatabaseStructure(context, wb)) {
-                Methods.saveWorkbook(context, wb, "Datos App.xlsx");
+            // Convert to the four plain-string tables and let go of the workbook immediately: the
+            // app's data model is the tables, and holding the POI model alongside them is what used
+            // to cost ~100 MB of heap per copy. Everything downstream is unaffected — the tables
+            // expose the same column-by-name reads the sheets did.
+            Map<String, Tabla> tablas = DatosAppStore.fromWorkbook(wb);
+            if (tablas == null) {
+                Methods.showFatalError(context, "Error: Falta una de las hojas requeridas "
+                        + "(Tecnicos, Productos, Clientes, Tarifas Mantenimiento) en el archivo.");
+                return "Desconocido";
+            }
+            if (ingestDatosAppTables(context, tablas)) {
                 return "Base de Datos";
             }
-        } 
+        }
         // Identify if it's an inventory file (Must start with INV and have correct headers)
         else if (originalFileName.toUpperCase().startsWith("INV")) {
             // Delete ANY existing temp file to ensure fresh import
@@ -140,37 +150,80 @@ public class ActualizarDatos {
     }
 
     /**
-     * Validates that the workbook contains all 4 required sheets and their specific headers.
-     * Column names are exactly matched against the provided structure.
+     * Validates the four tables and, if they hold up, makes them the app's data: persisted to the
+     * store and swapped in for the current session.
+     *
+     * <p>Shared by both input routes — the correo (a workbook, converted first) and the web sync
+     * (one CSV per table) — so a database arriving either way is held to exactly the same structure
+     * checks the workbook validation always applied.
+     *
+     * @return true once the tables are validated, persisted and live.
      */
-    private static boolean validateMainDatabaseStructure(Context context, XSSFWorkbook wb) {
+    static boolean ingestDatosAppTables(Context context, Map<String, Tabla> tablas) {
+        if (!validateDatosAppStructure(context, tablas)) return false;
+        if (!DatosAppStore.save(context, tablas)) {
+            Methods.showFatalError(context, "Error guardando la base de datos, comuniquese con un administrador");
+            return false;
+        }
+        Methods.adoptDatosApp(tablas);
+        return true;
+    }
+
+    /**
+     * Validates that all 4 required tables are present with their specific headers.
+     * Column names are exactly matched against the provided structure.
+     *
+     * Superset columns are deliberately NOT required — "CORREO OFICINA" (R6) and everything else
+     * the server sends beyond this list. A database saved before a column existed must keep
+     * working; making a new column required would fire the app-closing fatal dialog on every
+     * older file and on any server rollback.
+     */
+    private static boolean validateDatosAppStructure(Context context, Map<String, Tabla> tablas) {
         try {
-            // 1. Check for required sheets
-            List<String> requiredSheets = Arrays.asList("Tecnicos", "Productos", "Clientes", "Tarifas Mantenimiento");
-            for (String sheetName : requiredSheets) {
-                if (wb.getSheet(sheetName) == null) {
-                    Methods.showFatalError(context, "Error: Falta la hoja requerida '" + sheetName + "' en el archivo.");
+            if (tablas == null) {
+                Methods.showFatalError(context, "Error: No se pudo leer la base de datos.");
+                return false;
+            }
+            // 1. Check for required tables
+            for (String[] t : DatosAppStore.TABLES) {
+                if (tablas.get(t[1]) == null) {
+                    Methods.showFatalError(context, "Error: Falta la hoja requerida '" + t[1] + "' en el archivo.");
                     return false;
                 }
             }
 
-            // 2. Validate columns for each sheet with official header names provided by user
-            boolean isValid = validateHeaders(context, wb.getSheet("Tecnicos"), 
+            // 2. Validate columns for each table with official header names provided by user
+            return validateHeaders(context, tablas.get("Tecnicos"),
                     Arrays.asList("NUMERO", "CEDULA", "1 APELLIDO", "2 APELLIDO", "NOMBRES", "CORREO")) &&
-                    validateHeaders(context, wb.getSheet("Productos"), 
+                    validateHeaders(context, tablas.get("Productos"),
                     Arrays.asList("referencia", "nombre", "seccion", "iva", "activo", "empresa", "precio_base", "descuento_inservice", "fecha_inicio_vigencia")) &&
-                    validateHeaders(context, wb.getSheet("Clientes"), 
+                    validateHeaders(context, tablas.get("Clientes"),
                     Arrays.asList("finca_id", "empresa", "direccion", "zona", "ciu", "numero_equipo", "clase_equipo", "persona_doc", "persona_nombre", "persona_telefono", "persona_email")) &&
-                    validateHeaders(context, wb.getSheet("Tarifas Mantenimiento"), 
+                    validateHeaders(context, tablas.get("Tarifas Mantenimiento"),
                     Arrays.asList("empresa", "referencia", "descripcion", "precio_base", "activo"));
-
-            return isValid;
 
         } catch (Exception e) {
             Log.e(TAG, "Exception during validation", e);
             Methods.showFatalError(context, "Error inesperado validando la integridad del archivo.");
             return false;
         }
+    }
+
+    /** Verifies a table exposes every required column, keeping the original per-column message. */
+    private static boolean validateHeaders(Context context, Tabla tabla, List<String> requiredHeaders) {
+        if (tabla == null || tabla.columnCount() == 0) {
+            Methods.showFatalError(context, "Error: La hoja '" + (tabla != null ? tabla.nombre() : "?")
+                    + "' esta vacia o no tiene cabeceras.");
+            return false;
+        }
+        for (String required : requiredHeaders) {
+            if (tabla.columnIndex(required) == -1) {
+                Methods.showFatalError(context, "Error de formato: Falta la columna '" + required
+                        + "' en la hoja '" + tabla.nombre() + "'.");
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

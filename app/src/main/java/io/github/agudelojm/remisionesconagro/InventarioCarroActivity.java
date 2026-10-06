@@ -66,8 +66,7 @@ public class InventarioCarroActivity extends AppCompatActivity {
         tlyTabla = findViewById(R.id.tly_TablaDatos_Inventario_Carro);
 
         // Set up Autocomplete
-        ArrayAdapter<String> productAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_dropdown_item_1line, Methods.getListaProductos());
+        CodigoNombreAdapter productAdapter = new CodigoNombreAdapter(this, Methods.getListaProductos());
         edtInput.setAdapter(productAdapter);
     }
 

@@ -53,13 +53,16 @@ public class EditarRemisionActivity extends AppCompatActivity {
     private Map<String, String> fincaActual;
     private HashMap<String, String> userData;
     private String consecutivo = "";
-    private String currentObservaciones = "Sin observaciones";
+    private String currentObservaciones = ObservacionesActivity.SIN_OBSERVACIONES;
+    /** What the remisión was saved with, so the edit screen can offer it back for editing. */
+    private String observacionesOriginales = "";
 
     private final ActivityResultLauncher<Intent> observacionesLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
                 if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    currentObservaciones = result.getData().getStringExtra("observaciones");
+                    currentObservaciones = result.getData()
+                            .getStringExtra(ObservacionesActivity.RESULT_OBSERVACIONES);
                     pedirFirmaTecnico();
                 }
             }
@@ -123,8 +126,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
         String titulo = "Editar Remisión - " + consecutivo;
         tvwTitulo.setText(titulo);
 
-        ArrayAdapter<String> productAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_dropdown_item_1line, Methods.getListaProductos());
+        CodigoNombreAdapter productAdapter = new CodigoNombreAdapter(this, Methods.getListaProductos());
         edtProductoRef.setAdapter(productAdapter);
         
         loadMantenimientos();
@@ -170,6 +172,14 @@ public class EditarRemisionActivity extends AppCompatActivity {
             return;
         }
         try {
+            // Absent on remisiones saved before observaciones were persisted: "" then means the
+            // edit screen opens with an empty field, exactly as it always did.
+            observacionesOriginales = json.optString(ObservacionesActivity.RESULT_OBSERVACIONES, "");
+            if (ObservacionesActivity.SIN_OBSERVACIONES.equalsIgnoreCase(observacionesOriginales)) {
+                // The placeholder is not something the técnico typed, so do not offer it back.
+                observacionesOriginales = "";
+            }
+
             JSONObject fincaJson = json.getJSONObject("fincaData");
             fincaActual = new HashMap<>();
             JSONArray names = fincaJson.names();
@@ -413,6 +423,11 @@ public class EditarRemisionActivity extends AppCompatActivity {
 
     private void continuarTrasRecordatorio() {
         Intent intent = new Intent(this, ObservacionesActivity.class);
+        // Offer the original text back instead of making the técnico retype it from memory: an
+        // edit used to replace whatever the remisión said with the empty field's placeholder.
+        if (!observacionesOriginales.isEmpty()) {
+            intent.putExtra(ObservacionesActivity.EXTRA_PRELLENADO, observacionesOriginales);
+        }
         observacionesLauncher.launch(intent);
     }
 
@@ -487,7 +502,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
                     if (pdf.exists()) pdf.delete();
                     
                     // 4. Update permanent metadata
-                    Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false);
+                    Methods.saveRemisionData(this, consecutivo, fincaActual, pdfItems, userData, false, currentObservaciones);
 
                     finish();
                 })

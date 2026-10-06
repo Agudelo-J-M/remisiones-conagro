@@ -3,7 +3,6 @@ package io.github.agudelojm.remisionesconagro;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.InputType;
-import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -36,13 +35,13 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
     // Carried across the async reason/email steps
     private int pendingSeedSeq = -1;
     private String pendingReason = "";
-    private boolean pendingNuncaEnviado = false;
 
     private final ActivityResultLauncher<Intent> observacionesLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
                 if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    onReasonEntered(result.getData().getStringExtra("observaciones"));
+                    onReasonEntered(result.getData()
+                            .getStringExtra(ObservacionesActivity.RESULT_OBSERVACIONES));
                 }
             }
     );
@@ -111,9 +110,14 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
         }
 
         // "Nunca he enviado una remisión" only makes sense before this técnico has a consecutivo
-        // at all; once one exists, checking it would contradict the app's own records.
-        chkNuncaEnviado.setVisibility(yaConfigurado ? View.GONE : View.VISIBLE);
-        if (yaConfigurado) chkNuncaEnviado.setChecked(false);
+        // at all; once one exists, checking it would contradict the app's own records. Disabled
+        // rather than hidden: a vanished control reads as a bug, and the técnico who truly never
+        // sent one still needs to see that the option exists and why it is closed to them.
+        chkNuncaEnviado.setEnabled(!yaConfigurado);
+        if (yaConfigurado) {
+            chkNuncaEnviado.setChecked(false);
+            chkNuncaEnviado.setText("Nunca he enviado una remisión (ya tiene consecutivo configurado)");
+        }
     }
 
     /** Step 1: cédula re-authentication. */
@@ -199,12 +203,11 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
     /** Step 3: reason via Observaciones, after warning that the office will be notified. */
     private void proceedToReason(int seedSeq, boolean nuncaEnviado) {
         pendingSeedSeq = seedSeq;
-        pendingNuncaEnviado = nuncaEnviado;
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Aviso")
                 .setMessage("Este cambio será notificado a la oficina por correo antes de aplicarse.")
                 .setPositiveButton("Entendido", (d, w) ->
-                        launchReasonScreen(pendingNuncaEnviado ? "primer vez" : null))
+                        launchReasonScreen(nuncaEnviado ? "primer vez" : null))
                 .setCancelable(false)
                 .show();
     }
@@ -216,11 +219,12 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
      */
     private void launchReasonScreen(String prellenado) {
         Intent intent = new Intent(this, ObservacionesActivity.class);
-        intent.putExtra("titulo", "Motivo del cambio");
-        intent.putExtra("subtitulo", "Indique el motivo del cambio de consecutivo (obligatorio):");
-        intent.putExtra("botonTexto", "Siguiente (Notificar)");
-        intent.putExtra("obligatorio", true);
-        if (prellenado != null) intent.putExtra("prellenado", prellenado);
+        intent.putExtra(ObservacionesActivity.EXTRA_TITULO, "Motivo del cambio");
+        intent.putExtra(ObservacionesActivity.EXTRA_SUBTITULO,
+                "Indique el motivo del cambio de consecutivo (obligatorio):");
+        intent.putExtra(ObservacionesActivity.EXTRA_BOTON_TEXTO, "Siguiente (Notificar)");
+        intent.putExtra(ObservacionesActivity.EXTRA_OBLIGATORIO, true);
+        if (prellenado != null) intent.putExtra(ObservacionesActivity.EXTRA_PRELLENADO, prellenado);
         observacionesLauncher.launch(intent);
     }
 

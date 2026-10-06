@@ -54,16 +54,24 @@ public class Methods {
     private static boolean isInitializing = false;
     private static final DataFormatter dataFormatter = new DataFormatter();
 
-    // The main data workbook containing multiple sheets
-    private static XSSFWorkbook datosAppWb = null;
-    
-    // Individual sheets from datosAppWb
-    private static Sheet tecnicosSheet = null;
-    private static Sheet productosSheet = null;
-    private static Sheet clientesSheet = null;
-    private static Sheet tarifasMantenimientoSheet = null;
+    // The four Datos App tables, held as plain strings rather than as a POI workbook. See Tabla
+    // for why: the workbook form cost ~100 MB of heap and over a second of UI-thread parsing per
+    // copy, and the sync briefly needed two copies at once.
+    private static Tabla tecnicosTabla = null;
+    private static Tabla productosTabla = null;
+    private static Tabla clientesTabla = null;
+    private static Tabla tarifasMantenimientoTabla = null;
 
-    // Independent workbook for temporary inventory operations
+    // Derived autocomplete lists. Rebuilt only when the tables are replaced (see adoptDatosApp),
+    // never per screen open: three activities used to rebuild the 4 800-entry producto list in
+    // onCreate, on the UI thread, every single time.
+    private static List<String> cacheListaProductos = null;
+    private static List<String> cacheListaFincas = null;
+    private static List<String> cacheListaMantenimientos = null;
+    private static List<Map<String, String>> cacheListaClientes = null;
+
+    // Independent workbook for temporary inventory operations. Still POI: one bodega's inventory
+    // is a few hundred rows, and the two-stage temp/definitive flow is built around the workbook.
     private static XSSFWorkbook inventarioWb = null;
 
     /**
@@ -98,17 +106,8 @@ public class Methods {
             }
 
             try {
-                datosAppWb = loadWorkbookFromFile(currentActivity, "Datos App.xlsx");
-                if (datosAppWb == null) throw new Exception("Archivo 'Datos App.xlsx' no encontrado");
-
-                // Map sheets by name as per new requirement
-                tecnicosSheet = datosAppWb.getSheet("Tecnicos");
-                productosSheet = datosAppWb.getSheet("Productos");
-                clientesSheet = datosAppWb.getSheet("Clientes");
-                tarifasMantenimientoSheet = datosAppWb.getSheet("Tarifas Mantenimiento");
-
-                if (tecnicosSheet == null || productosSheet == null || clientesSheet == null || tarifasMantenimientoSheet == null) {
-                    throw new Exception("Error de formato: faltan hojas en 'Datos App.xlsx'");
+                if (!loadDatosApp(currentActivity)) {
+                    throw new Exception("Base de datos no encontrada");
                 }
 
                 // Load Inventory (Template for validations)
@@ -291,18 +290,19 @@ public class Methods {
         }
 
         try {
-            if (tecnicosSheet == null) throw new Exception("Tecnicos sheet not loaded");
-            
-            int idxCorreo = getColumnIndex(tecnicosSheet, "CORREO");
-            int idxCedula = getColumnIndex(tecnicosSheet, "CEDULA");
-            int idxNombre = getColumnIndex(tecnicosSheet, "NOMBRES");
-            int idxAp1 = getColumnIndex(tecnicosSheet, "1 APELLIDO");
-            int idxAp2 = getColumnIndex(tecnicosSheet, "2 APELLIDO");
-            int idxNumero = getColumnIndex(tecnicosSheet, "NUMERO");
+            Tabla tecnicos = tecnicosTabla;
+            if (tecnicos == null) throw new Exception("Tabla Tecnicos no cargada");
+
+            int idxCorreo = tecnicos.columnIndex("CORREO");
+            int idxCedula = tecnicos.columnIndex("CEDULA");
+            int idxNombre = tecnicos.columnIndex("NOMBRES");
+            int idxAp1 = tecnicos.columnIndex("1 APELLIDO");
+            int idxAp2 = tecnicos.columnIndex("2 APELLIDO");
+            int idxNumero = tecnicos.columnIndex("NUMERO");
             // Office address the remisiones must be sent to. Deliberately NOT part of the
             // required-column check below: a phone still holding a pre-"CORREO OFICINA"
             // database must keep logging in, it just gets "" and the manual reminder instead.
-            int idxCorreoOficina = getColumnIndex(tecnicosSheet, "CORREO OFICINA");
+            int idxCorreoOficina = tecnicos.columnIndex("CORREO OFICINA");
 
             if (idxCorreo == -1 || idxCedula == -1 || idxNombre == -1 || idxNumero == -1) {
                 throw new Exception("Error de formato: faltan columnas requeridas en hoja Tecnicos");
@@ -316,24 +316,48 @@ public class Methods {
                         + "el correo de la oficina no se completará automáticamente.");
             }
 
-            for (Row row : tecnicosSheet) {
-                if (row.getRowNum() == 0) continue;
-                
-                String correoFile = dataFormatter.formatCellValue(row.getCell(idxCorreo));
-                if (correoIngresado.equalsIgnoreCase(correoFile)) {
-                    String cedulaFile = dataFormatter.formatCellValue(row.getCell(idxCedula));
-                    if (cedulaIngresada.equals(cedulaFile)) {
-                        data.put("code", "1");
-                        data.put("message", "Inicio de sesión exitoso.");
-                        data.put("nombre", dataFormatter.formatCellValue(row.getCell(idxNombre)));
-                        data.put("apellidos", dataFormatter.formatCellValue(row.getCell(idxAp1)) + " " + dataFormatter.formatCellValue(row.getCell(idxAp2)));
-                        data.put("numero", dataFormatter.formatCellValue(row.getCell(idxNumero)));
-                        data.put("cedula", cedulaFile);
-                        data.put("correoOficina", idxCorreoOficina == -1 ? ""
-                                : dataFormatter.formatCellValue(row.getCell(idxCorreoOficina)).trim());
-                        return data;
-                    }
+            // Scan the whole table instead of returning on the first hit. Two rows sharing BOTH
+            // correo and cédula are indistinguishable identities, and quietly taking the first
+            // would hand that técnico another row's NUMERO — which is the bodega code, the
+            // consecutivo prefix and the office address at once. Rows sharing only the correo are
+            // fine and already happen on the server; the cédula separates them.
+            int match = -1;
+            boolean duplicado = false;
+            for (int r = 0; r < tecnicos.rowCount(); r++) {
+                if (!correoIngresado.equalsIgnoreCase(tecnicos.value(r, idxCorreo))) continue;
+                if (!cedulaIngresada.equals(tecnicos.value(r, idxCedula))) continue;
+                if (match == -1) {
+                    match = r;
+                } else {
+                    duplicado = true;
+                    break;
                 }
+            }
+
+            if (duplicado) {
+                Log.w(TAG, "Dos filas de Tecnicos comparten CORREO y CEDULA; login ambiguo rechazado.");
+                data.put("code", "0");
+                data.put("message", "Hay dos técnicos registrados con el mismo correo y la misma "
+                        + "cédula. Notifique a la oficina para corregir la base de datos.");
+                return data;
+            }
+
+            if (match != -1) {
+                // 1/2 APELLIDO are not in the required-column check above, so read them
+                // defensively: a database missing one must shorten the name, not fail the login
+                // with a format error (row.getCell(-1) used to throw into the catch below).
+                String ap1 = (idxAp1 == -1) ? "" : tecnicos.value(match, idxAp1);
+                String ap2 = (idxAp2 == -1) ? "" : tecnicos.value(match, idxAp2);
+
+                data.put("code", "1");
+                data.put("message", "Inicio de sesión exitoso.");
+                data.put("nombre", tecnicos.value(match, idxNombre));
+                data.put("apellidos", (ap1 + " " + ap2).trim());
+                data.put("numero", tecnicos.value(match, idxNumero));
+                data.put("cedula", tecnicos.value(match, idxCedula));
+                data.put("correoOficina", (idxCorreoOficina == -1) ? ""
+                        : tecnicos.value(match, idxCorreoOficina).trim());
+                return data;
             }
         } catch (Exception e) {
             Log.e(TAG, "Credential validation error", e);
@@ -395,24 +419,24 @@ public class Methods {
      */
     public static Map<String, String> getProductoDetails(Context context, String query) {
         try {
-            if (productosSheet == null) throw new Exception("Productos sheet not initialized");
-            int idxRef = getColumnIndex(productosSheet, "referencia");
-            int idxNombre = getColumnIndex(productosSheet, "nombre");
+            Tabla productos = productosTabla;
+            if (productos == null) throw new Exception("Tabla Productos no cargada");
+            int idxRef = productos.columnIndex("referencia");
+            int idxNombre = productos.columnIndex("nombre");
 
             if (idxRef == -1 || idxNombre == -1) return null;
 
-            for (Row row : productosSheet) {
-                if (row.getRowNum() == 0) continue;
-                String ref = dataFormatter.formatCellValue(row.getCell(idxRef));
-                String name = dataFormatter.formatCellValue(row.getCell(idxNombre));
-                
-                if (query.equalsIgnoreCase(ref) || query.equalsIgnoreCase(name)) {
-                    Map<String, String> map = new HashMap<>();
-                    map.put("referencia", ref);
-                    map.put("nombre", name);
-                    return map;
-                }
-            }
+            // Indexed, not a scan: this used to walk all 4 800 producto rows on every lookup.
+            // Referencia is tried first — the only caller passes one — where the old scan would
+            // have taken whichever of the two matched in the earlier row.
+            int row = productos.findRow("referencia", query);
+            if (row == -1) row = productos.findRow("nombre", query);
+            if (row == -1) return null;
+
+            Map<String, String> map = new HashMap<>();
+            map.put("referencia", productos.value(row, idxRef));
+            map.put("nombre", productos.value(row, idxNombre));
+            return map;
         } catch (Exception e) {
             Log.e(TAG, "Error fetching product details", e);
         }
@@ -433,6 +457,10 @@ public class Methods {
      */
     public static XSSFWorkbook loadInventarioWb(Context context) {
         try {
+            // NOT closed before replacing, unlike the Datos App tables: InventarioBodegaActivity
+            // holds the reference it got from getInventarioWb(), so closing here could pull the
+            // package out from under a live screen. One bodega is a few hundred rows, so the cost
+            // of letting GC handle it is small.
             inventarioWb = loadWorkbookFromFile(context, "Inventario.xlsx");
             return inventarioWb;
         } catch (Exception e) {
@@ -491,43 +519,89 @@ public class Methods {
     }
 
     /**
-     * Silently re-reads "Datos App.xlsx" from internal storage and re-maps the four sheets.
+     * Makes these four tables the app's live data and drops the derived autocomplete caches.
      *
-     * Needed by the web sync (R5): {@link #initializeData} runs in MainActivity, i.e. BEFORE
-     * login, while the sync lands a fresh file AFTER login (MenuActivity). Without this the
-     * técnico would keep working against the previous session's clientes/productos/tarifas
-     * until the app was restarted. Unlike initializeData there is no loading spinner and no
-     * "Éxito leyendo Exceles" alert, so the refresh is invisible.
-     *
-     * The in-memory sheets are swapped only if the new workbook loads with all four sheets
-     * present; otherwise the running session is left untouched.
-     *
-     * @return true if the sheets were refreshed.
+     * The ONLY way the tables are replaced, whichever route they arrived by. Replacement is a
+     * handful of reference assignments, which is what lets the web sync swap fresh data in without
+     * a spinner and without the old "Éxito leyendo Exceles" alert.
      */
-    public static synchronized boolean reloadDatosApp(Context context) {
+    static synchronized void adoptDatosApp(Map<String, Tabla> tablas) {
+        if (tablas == null) return;
+        Tabla tecnicos = tablas.get("Tecnicos");
+        Tabla productos = tablas.get("Productos");
+        Tabla clientes = tablas.get("Clientes");
+        Tabla tarifas = tablas.get("Tarifas Mantenimiento");
+        if (tecnicos == null || productos == null || clientes == null || tarifas == null) {
+            // All four or none: a half-swapped database (a fresh Tecnicos against stale Productos)
+            // is worse than stale data, and would be invisible to the técnico.
+            Log.w(TAG, "Refusing to adopt an incomplete database; keeping current data.");
+            return;
+        }
+        tecnicosTabla = tecnicos;
+        productosTabla = productos;
+        clientesTabla = clientes;
+        tarifasMantenimientoTabla = tarifas;
+        cacheListaProductos = null;
+        cacheListaFincas = null;
+        cacheListaMantenimientos = null;
+        cacheListaClientes = null;
+        Log.d(TAG, "Datos App adopted: " + tecnicos.rowCount() + " técnicos, "
+                + productos.rowCount() + " productos, " + clientes.rowCount() + " clientes, "
+                + tarifas.rowCount() + " tarifas.");
+    }
+
+    /**
+     * Loads the database from the CSV store, migrating a legacy "Datos App.xlsx" the one time it
+     * is still the only copy on the phone.
+     *
+     * The migration exists because older builds stored the workbook and nothing else: a phone
+     * updating into this version must not be told to go open the file from the correo again. It
+     * parses the workbook once, converts, saves the store and closes the workbook, so the heavy
+     * POI path is paid exactly once per phone instead of at every launch.
+     *
+     * @return true if the tables are now live.
+     */
+    static synchronized boolean loadDatosApp(Context context) {
+        Map<String, Tabla> tablas = DatosAppStore.load(context);
+        if (tablas != null) {
+            adoptDatosApp(tablas);
+            return tecnicosTabla != null;
+        }
+
+        File legacy = new File(context.getFilesDir(), DatosAppStore.LEGACY_WORKBOOK);
+        if (!legacy.exists()) return false;
+
+        Log.i(TAG, "No store yet; migrating the legacy '" + DatosAppStore.LEGACY_WORKBOOK + "'.");
+        XSSFWorkbook wb = null;
         try {
-            XSSFWorkbook wb = loadWorkbookFromFile(context, "Datos App.xlsx");
+            wb = loadWorkbookFromFile(context, DatosAppStore.LEGACY_WORKBOOK);
             if (wb == null) return false;
-
-            Sheet tecnicos = wb.getSheet("Tecnicos");
-            Sheet productos = wb.getSheet("Productos");
-            Sheet clientes = wb.getSheet("Clientes");
-            Sheet tarifas = wb.getSheet("Tarifas Mantenimiento");
-            if (tecnicos == null || productos == null || clientes == null || tarifas == null) {
-                Log.w(TAG, "Reloaded 'Datos App.xlsx' is missing sheets; keeping current data.");
-                return false;
+            Map<String, Tabla> migradas = DatosAppStore.fromWorkbook(wb);
+            if (migradas == null) return false;
+            closeQuietly(wb);
+            wb = null;
+            if (!DatosAppStore.save(context, migradas)) {
+                // Still usable this session even if the store could not be written; the next
+                // launch simply migrates again.
+                Log.w(TAG, "Migration could not be persisted; using the data for this session only.");
             }
-
-            datosAppWb = wb;
-            tecnicosSheet = tecnicos;
-            productosSheet = productos;
-            clientesSheet = clientes;
-            tarifasMantenimientoSheet = tarifas;
-            Log.d(TAG, "Datos App.xlsx reloaded in place after web sync.");
-            return true;
+            adoptDatosApp(migradas);
+            return tecnicosTabla != null;
         } catch (Exception e) {
-            Log.e(TAG, "Error reloading Datos App.xlsx", e);
+            Log.e(TAG, "Error migrating the legacy workbook", e);
             return false;
+        } finally {
+            closeQuietly(wb);
+        }
+    }
+
+    /** Closes a workbook, releasing its OPC package and temp files. Never throws. */
+    private static void closeQuietly(XSSFWorkbook wb) {
+        if (wb == null) return;
+        try {
+            wb.close();
+        } catch (Exception e) {
+            Log.w(TAG, "Error closing workbook: " + e.getMessage());
         }
     }
 
@@ -610,20 +684,21 @@ public class Methods {
      * Returns a list of maintenance service descriptions.
      * Uses a LinkedHashSet to remove duplicates while preserving order.
      */
-    public static List<String> getListaMantenimientos() {
-        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
-        if (tarifasMantenimientoSheet == null) return new ArrayList<>();
-        int idxDesc = getColumnIndex(tarifasMantenimientoSheet, "descripcion");
-        if (idxDesc == -1) return new ArrayList<>();
-
-        for (Row row : tarifasMantenimientoSheet) {
-            if (row.getRowNum() == 0) continue;
-            String desc = dataFormatter.formatCellValue(row.getCell(idxDesc));
-            if (!desc.isEmpty()) {
-                set.add(desc);
+    public static synchronized List<String> getListaMantenimientos() {
+        if (cacheListaMantenimientos == null) {
+            java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+            Tabla tarifas = tarifasMantenimientoTabla;
+            int idxDesc = (tarifas == null) ? -1 : tarifas.columnIndex("descripcion");
+            if (idxDesc != -1) {
+                for (int r = 0; r < tarifas.rowCount(); r++) {
+                    String desc = tarifas.value(r, idxDesc);
+                    if (!desc.isEmpty()) set.add(desc);
+                }
             }
+            cacheListaMantenimientos = new ArrayList<>(set);
         }
-        return new ArrayList<>(set);
+        // A copy, because callers hand this straight to an ArrayAdapter, which may add to it.
+        return new ArrayList<>(cacheListaMantenimientos);
     }
 
     /**
@@ -631,42 +706,29 @@ public class Methods {
      * Branches search logic: Products search by Ref, Services search by Description.
      */
     public static Map<String, String> buscarItem(String query, boolean isService) {
-        Sheet sheet = isService ? tarifasMantenimientoSheet : productosSheet;
-        if (sheet == null) return null;
+        Tabla tabla = isService ? tarifasMantenimientoTabla : productosTabla;
+        if (tabla == null || query == null) return null;
 
-        int idxRef = getColumnIndex(sheet, "referencia");
-        int idxNom = getColumnIndex(sheet, isService ? "descripcion" : "nombre");
-        int idxPrecio = getColumnIndex(sheet, "precio_base");
+        String colNombre = isService ? "descripcion" : "nombre";
+        int idxRef = tabla.columnIndex("referencia");
+        int idxNom = tabla.columnIndex(colNombre);
+        int idxPrecio = tabla.columnIndex("precio_base");
 
         if (idxRef == -1 || idxNom == -1) return null;
 
         // For products, handle "Ref - Name" format from autocomplete
         String cleanRef = query.split(" - ")[0].trim();
 
-        for (Row row : sheet) {
-            if (row.getRowNum() == 0) continue;
-            
-            String fileRef = dataFormatter.formatCellValue(row.getCell(idxRef));
-            String fileNom = dataFormatter.formatCellValue(row.getCell(idxNom));
+        // Indexed lookup on the same columns the scan used: a producto by reference, a
+        // mantenimiento by its full description.
+        int row = isService ? tabla.findRow(colNombre, query) : tabla.findRow("referencia", cleanRef);
+        if (row == -1) return null;
 
-            boolean isMatch;
-            if (isService) {
-                // Maintenance: Must match by FULL Description (Nombre)
-                isMatch = query.equalsIgnoreCase(fileNom);
-            } else {
-                // Product: Must match by Reference ID
-                isMatch = cleanRef.equalsIgnoreCase(fileRef);
-            }
-
-            if (isMatch) {
-                Map<String, String> map = new HashMap<>();
-                map.put("id", fileRef);
-                map.put("nombre", fileNom);
-                map.put("precio", idxPrecio != -1 ? dataFormatter.formatCellValue(row.getCell(idxPrecio)) : "0");
-                return map;
-            }
-        }
-        return null;
+        Map<String, String> map = new HashMap<>();
+        map.put("id", tabla.value(row, idxRef));
+        map.put("nombre", tabla.value(row, idxNom));
+        map.put("precio", idxPrecio != -1 ? tabla.value(row, idxPrecio) : "0");
+        return map;
     }
 
     /**
@@ -688,72 +750,61 @@ public class Methods {
      * Returns a list of all Finca IDs formatted as "ID - Name".
      * Uses a LinkedHashSet internally to prevent duplicates.
      */
-    public static List<String> getListaFincas() {
-        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
-        if (clientesSheet == null) return new ArrayList<>();
-        int idxId = getColumnIndex(clientesSheet, "finca_id");
-        int idxNom = getColumnIndex(clientesSheet, "finca_nombre"); // Corrected to finca_nombre
-        if (idxId == -1) return new ArrayList<>();
-
-        for (Row row : clientesSheet) {
-            if (row.getRowNum() == 0) continue;
-            String id = dataFormatter.formatCellValue(row.getCell(idxId));
-            String nom = (idxNom != -1) ? dataFormatter.formatCellValue(row.getCell(idxNom)) : "";
-            if (!id.isEmpty()) {
-                set.add(id + (nom.isEmpty() ? "" : " - " + nom));
+    public static synchronized List<String> getListaFincas() {
+        if (cacheListaFincas == null) {
+            java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+            Tabla clientes = clientesTabla;
+            int idxId = (clientes == null) ? -1 : clientes.columnIndex("finca_id");
+            int idxNom = (clientes == null) ? -1 : clientes.columnIndex("finca_nombre");
+            if (idxId != -1) {
+                for (int r = 0; r < clientes.rowCount(); r++) {
+                    String id = clientes.value(r, idxId);
+                    String nom = (idxNom != -1) ? clientes.value(r, idxNom) : "";
+                    if (!id.isEmpty()) set.add(id + (nom.isEmpty() ? "" : " - " + nom));
+                }
             }
+            cacheListaFincas = new ArrayList<>(set);
         }
-        return new ArrayList<>(set);
+        return new ArrayList<>(cacheListaFincas);
     }
 
     /**
      * Returns a list of all Product References formatted as "Ref - Name".
      * Uses a LinkedHashSet internally to prevent duplicates.
      */
-    public static List<String> getListaProductos() {
-        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
-        if (productosSheet == null) return new ArrayList<>();
-        int idxRef = getColumnIndex(productosSheet, "referencia");
-        int idxNom = getColumnIndex(productosSheet, "nombre");
-        if (idxRef == -1) return new ArrayList<>();
-
-        for (Row row : productosSheet) {
-            if (row.getRowNum() == 0) continue;
-            String ref = dataFormatter.formatCellValue(row.getCell(idxRef));
-            String nom = (idxNom != -1) ? dataFormatter.formatCellValue(row.getCell(idxNom)) : "";
-            if (!ref.isEmpty()) {
-                set.add(ref + (nom.isEmpty() ? "" : " - " + nom));
+    public static synchronized List<String> getListaProductos() {
+        if (cacheListaProductos == null) {
+            java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+            Tabla productos = productosTabla;
+            int idxRef = (productos == null) ? -1 : productos.columnIndex("referencia");
+            int idxNom = (productos == null) ? -1 : productos.columnIndex("nombre");
+            if (idxRef != -1) {
+                for (int r = 0; r < productos.rowCount(); r++) {
+                    String ref = productos.value(r, idxRef);
+                    String nom = (idxNom != -1) ? productos.value(r, idxNom) : "";
+                    if (!ref.isEmpty()) set.add(ref + (nom.isEmpty() ? "" : " - " + nom));
+                }
             }
+            cacheListaProductos = new ArrayList<>(set);
         }
-        return new ArrayList<>(set);
+        return new ArrayList<>(cacheListaProductos);
     }
 
     /**
      * Searches for a Finca/Client by its query string (ID or Name).
      */
     public static Map<String, String> buscarCliente(String query) {
-        if (clientesSheet == null) return null;
-        int idxId = getColumnIndex(clientesSheet, "finca_id");
-        if (idxId == -1) return null;
+        Tabla clientes = clientesTabla;
+        if (clientes == null || query == null) return null;
+        if (clientes.columnIndex("finca_id") == -1) return null;
 
         // Clean query if it came from autocomplete "ID - Name"
         String fincaId = query.split(" - ")[0].trim();
 
-        for (Row row : clientesSheet) {
-            if (row.getRowNum() == 0) continue;
-            if (fincaId.equalsIgnoreCase(dataFormatter.formatCellValue(row.getCell(idxId)))) {
-                Map<String, String> map = new HashMap<>();
-                // Extract all column values for the PDF
-                Row header = clientesSheet.getRow(0);
-                for (Cell cell : header) {
-                    String key = dataFormatter.formatCellValue(cell);
-                    String val = dataFormatter.formatCellValue(row.getCell(cell.getColumnIndex()));
-                    map.put(key, val);
-                }
-                return map;
-            }
-        }
-        return null;
+        int row = clientes.findRow("finca_id", fincaId);
+        if (row == -1) return null;
+        // Every column, because the PDF reads finca_nombre, direccion, persona_* and more.
+        return clientes.rowAsMap(row);
     }
 
     // ------------------------------------------------------------------
@@ -774,28 +825,29 @@ public class Methods {
      * Returns every client row as a full column map (finca_id, finca_nombre, persona_doc, ...).
      * Backs the client autocomplete; rows without a finca_id or entirely empty are skipped.
      */
-    public static List<Map<String, String>> getListaClientes() {
-        List<Map<String, String>> lista = new ArrayList<>();
-        if (clientesSheet == null) return lista;
-        Row header = clientesSheet.getRow(0);
-        if (header == null) return lista;
-
-        for (Row row : clientesSheet) {
-            if (row.getRowNum() == 0) continue;
-            Map<String, String> map = new HashMap<>();
-            boolean anyValue = false;
-            for (Cell cell : header) {
-                String key = dataFormatter.formatCellValue(cell);
-                if (key.isEmpty()) continue;
-                String val = dataFormatter.formatCellValue(row.getCell(cell.getColumnIndex()));
-                map.put(key, val);
-                if (!val.isEmpty()) anyValue = true;
+    public static synchronized List<Map<String, String>> getListaClientes() {
+        if (cacheListaClientes == null) {
+            List<Map<String, String>> lista = new ArrayList<>();
+            Tabla clientes = clientesTabla;
+            if (clientes != null && clientes.columnCount() > 0) {
+                for (int r = 0; r < clientes.rowCount(); r++) {
+                    Map<String, String> map = clientes.rowAsMap(r);
+                    boolean anyValue = false;
+                    for (String val : map.values()) {
+                        if (!val.isEmpty()) {
+                            anyValue = true;
+                            break;
+                        }
+                    }
+                    if (anyValue && !map.getOrDefault("finca_id", "").isEmpty()) {
+                        lista.add(map);
+                    }
+                }
             }
-            if (anyValue && !map.getOrDefault("finca_id", "").isEmpty()) {
-                lista.add(map);
-            }
+            cacheListaClientes = lista;
         }
-        return lista;
+        // Shallow copy: the row maps themselves are shared, but nothing mutates them.
+        return new ArrayList<>(cacheListaClientes);
     }
 
     /** Exact, unique client resolution by finca_id (the authoritative lookup used at commit). */
@@ -1080,12 +1132,29 @@ public class Methods {
      * Saves remission metadata and items to a JSON file.
      */
     public static synchronized void saveRemisionData(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, boolean restored) {
+        saveRemisionData(context, consecutivo, fincaData, items, tecnicoData, restored, null);
+    }
+
+    /**
+     * As above, also recording the observaciones the técnico typed.
+     *
+     * The observaciones used to live only in the generated PDF, so Editar Remisión had nothing to
+     * show and silently replaced them with whatever was retyped (or with "Sin observaciones" if the
+     * field was left alone). Persisting them lets the edit screen pre-fill the original text.
+     *
+     * @param observaciones may be null for a caller that has none; the key is then omitted and
+     *                      readers fall back to "", which is the pre-existing behavior.
+     */
+    public static synchronized void saveRemisionData(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, boolean restored, String observaciones) {
         try {
             JSONObject json = new JSONObject();
             json.put("consecutivo", consecutivo);
             json.put("fecha", System.currentTimeMillis());
             json.put("restored", restored);
-            
+            if (observaciones != null) {
+                json.put("observaciones", observaciones);
+            }
+
             if (fincaData != null) {
                 JSONObject fincaJson = new JSONObject(fincaData);
                 json.put("fincaData", fincaJson);

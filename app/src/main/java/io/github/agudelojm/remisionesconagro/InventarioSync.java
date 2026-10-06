@@ -6,9 +6,6 @@ import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 
-import org.apache.poi.ss.usermodel.Row;
-import org.apache.poi.ss.usermodel.Sheet;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -20,8 +17,10 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Calendar;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,11 +28,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Web sync for the two data files that previously arrived only by email.
  *
- * This is an ADDED input route: whatever comes off the wire is shaped into the same file the
- * email path delivers and handed to the EXISTING parser
- * ({@link ActualizarDatos#setFileInputStream}), so parsing, validation, the two-stage
- * temp/definitive flow and everything downstream are unchanged. The email route also remains
- * fully functional.
+ * This is an ADDED input route, and the email route remains fully functional. The bodega CSV is
+ * still handed to the EXISTING parser ({@link ActualizarDatos#setFileInputStream}), so the
+ * two-stage temp/definitive inventory flow is unchanged. The database tables go to
+ * {@link ActualizarDatos#ingestDatosAppTables}, which applies the same structure validation a
+ * workbook from the correo gets — both routes converge there, on the same data model.
  *
  * Responsibilities:
  *   R1 — fetch the bodega inventory CSV over HTTP and feed it to the CSV parser. Runs at
@@ -43,9 +42,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *        archive/restore of definitive inventories so a número change never mixes two
  *        bodegas' data.
  *   R5 — the four Datos App tables (tecnicos, productos, clientes, tarifas) over HTTP,
- *        reassembled into the "Datos App.xlsx" workbook the parser already knows. Runs at app
- *        open (MainActivity), BEFORE login, so credentials are checked against server-fresh
- *        técnicos.
+ *        parsed straight into the four string tables the app keeps (no workbook is built
+ *        any more). Runs at app open (MainActivity), BEFORE login, so credentials are checked
+ *        against server-fresh técnicos.
  */
 public class InventarioSync {
 
@@ -65,19 +64,6 @@ public class InventarioSync {
 
     private enum FetchStatus { OK, NO_DATA, AUTH_ERROR, NETWORK_ERROR }
 
-    /**
-     * The four tables the Datos App endpoint serves ({@code ?tabla=...}) paired with the sheet
-     * name each one must land on. The sheet names are matched exactly by
-     * {@link ActualizarDatos} and {@link Methods#initializeData}, so do not "tidy" them —
-     * note that the "tarifas" table is the "Tarifas Mantenimiento" sheet.
-     */
-    private static final String[][] DATOS_APP_TABLES = {
-            {"tecnicos", "Tecnicos"},
-            {"productos", "Productos"},
-            {"clientes", "Clientes"},
-            {"tarifas", "Tarifas Mantenimiento"},
-    };
-
     private static class FetchResult {
         final FetchStatus status;
         final byte[] body;
@@ -87,13 +73,13 @@ public class InventarioSync {
         }
     }
 
-    /** Outcome of the multi-request Datos App sync: the assembled workbook, or why not. */
+    /** Outcome of the multi-request Datos App sync: the four tables, or why not. */
     private static class DatosAppResult {
         final FetchStatus status;
-        final byte[] workbook;
-        DatosAppResult(FetchStatus status, byte[] workbook) {
+        final Map<String, Tabla> tablas;
+        DatosAppResult(FetchStatus status, Map<String, Tabla> tablas) {
             this.status = status;
-            this.workbook = workbook;
+            this.tablas = tablas;
         }
     }
 
@@ -104,7 +90,7 @@ public class InventarioSync {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Refreshes the "Datos App.xlsx" database BEFORE the login screen becomes usable, so a
+     * Refreshes the database BEFORE the login screen becomes usable, so a
      * técnico who was just added on the server can log in on a phone whose local file predates
      * them. Called from MainActivity.onCreate; unlike the bodega report it needs no número,
      * which is exactly why it can run this early.
@@ -112,8 +98,8 @@ public class InventarioSync {
      * Two shapes, decided by whether a database already exists on the phone:
      * <ul>
      *   <li><b>It exists</b> — {@code onReady} runs immediately so the screen is not held up;
-     *       the fetch continues in the background and {@link Methods#reloadDatosApp} swaps the
-     *       fresh sheets in when it lands, which in practice is well before the técnico has
+     *       the fetch continues in the background and {@link Methods#adoptDatosApp} swaps the
+     *       fresh tables in when it lands, which in practice is well before the técnico has
      *       finished typing correo + cédula.</li>
      *   <li><b>It does not exist</b> (fresh install) — we MUST wait, because
      *       {@link Methods#initializeData} would otherwise reach its "abra el archivo desde su
@@ -129,7 +115,9 @@ public class InventarioSync {
      */
     public static void runDatosAppSyncIfNeeded(final Activity activity, final Runnable onReady) {
         final Context appContext = activity.getApplicationContext();
-        final boolean hasLocalDatabase = new File(appContext.getFilesDir(), "Datos App.xlsx").exists();
+        // "Has data" means the CSV store OR a legacy workbook still awaiting migration — a phone
+        // updating from an older build must not be treated as a fresh install and made to wait.
+        final boolean hasLocalDatabase = DatosAppStore.hasAnyLocalData(appContext);
 
         if (!shouldSyncDatosApp(appContext, hasLocalDatabase)) {
             onReady.run();
@@ -151,8 +139,10 @@ public class InventarioSync {
             DatosAppResult fetched = null;
             try {
                 fetched = fetchDatosAppOrNull();
-            } catch (Exception e) {
-                Log.e(TAG, "Unexpected error during database sync", e);
+            } catch (Throwable t) {
+                // Throwable, not Exception: an OutOfMemoryError while holding the payloads must
+                // leave the técnico on a working login screen, not take the process down.
+                Log.e(TAG, "Unexpected error during database sync", t);
             }
             final DatosAppResult result = fetched;
 
@@ -243,12 +233,18 @@ public class InventarioSync {
                     return;
                 }
                 activity.runOnUiThread(() -> {
-                    String message = handleBodegaResult(activity, appContext, bodegaResult);
-                    if (message != null) showAlert(activity, message);
+                    try {
+                        String message = handleBodegaResult(activity, appContext, bodegaResult);
+                        if (message != null) showAlert(activity, message);
+                    } catch (Throwable t) {
+                        // The bodega workbook is small, but the same rule applies: a failed sync
+                        // must never take down a session the técnico is already working in.
+                        Log.e(TAG, "Error ingesting the bodega inventory", t);
+                    }
                 });
 
-            } catch (Exception e) {
-                Log.e(TAG, "Unexpected error during inventory sync", e);
+            } catch (Throwable t) {
+                Log.e(TAG, "Unexpected error during inventory sync", t);
             }
         });
     }
@@ -370,16 +366,18 @@ public class InventarioSync {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Downloads the four database tables and reassembles them into a single workbook shaped
-     * exactly like the emailed "Datos App.xlsx", so the unchanged {@link ActualizarDatos}
-     * email code path validates and stores it.
+     * Downloads the four database tables and turns each one into a {@link Tabla}.
      *
-     * The endpoint serves ONE table per request as CSV ({@code ?tabla=...}), not a ready-made
-     * workbook, hence the assembly here. It is all-or-nothing: if any table fails or comes
-     * back without data rows we return the failure and never touch the stored database — a
-     * half-written file (an empty "Tecnicos" above all) would lock every técnico out of login.
+     * The endpoint serves ONE table per request as CSV ({@code ?tabla=...}), and CSV is also what
+     * the app stores, so nothing here goes through Apache POI: the old version assembled an
+     * .xlsx workbook purely to hand the parser a file, which cost ~108 MB of heap and several
+     * seconds for data that is 544 KB on disk.
      *
-     * @return the assembled workbook and status, or null when the endpoint is not configured.
+     * It is all-or-nothing: if any table fails or comes back without data rows we return the
+     * failure and never touch the stored database — a half-written database (an empty "Tecnicos"
+     * above all) would lock every técnico out of login.
+     *
+     * @return the four tables and status, or null when the endpoint is not configured.
      */
     private static DatosAppResult fetchDatosAppOrNull() {
         String base = BuildConfig.DATOS_APP_URL;
@@ -388,88 +386,31 @@ public class InventarioSync {
             return null;
         }
 
-        XSSFWorkbook wb = new XSSFWorkbook();
-        try {
-            for (String[] table : DATOS_APP_TABLES) {
-                String url = base + (base.contains("?") ? "&" : "?") + "tabla=" + table[0];
-                if (BuildConfig.DATOS_APP_KEY != null && !BuildConfig.DATOS_APP_KEY.isEmpty()) {
-                    url += "&key=" + BuildConfig.DATOS_APP_KEY;
-                }
-
-                FetchResult result = httpGet(url);
-                if (result.status != FetchStatus.OK) {
-                    Log.w(TAG, "Table " + table[0] + " failed (" + result.status
-                            + "); aborting database sync without touching the stored file.");
-                    return new DatosAppResult(result.status, null);
-                }
-                if (!appendCsvAsSheet(wb, table[1], result.body)) {
-                    return new DatosAppResult(FetchStatus.NO_DATA, null);
-                }
+        Map<String, Tabla> tablas = new LinkedHashMap<>();
+        for (String[] table : DatosAppStore.TABLES) {
+            String url = base + (base.contains("?") ? "&" : "?") + "tabla=" + table[0];
+            if (BuildConfig.DATOS_APP_KEY != null && !BuildConfig.DATOS_APP_KEY.isEmpty()) {
+                url += "&key=" + BuildConfig.DATOS_APP_KEY;
             }
 
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            wb.write(bos);
-            return new DatosAppResult(FetchStatus.OK, bos.toByteArray());
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error assembling the Datos App workbook", e);
-            return new DatosAppResult(FetchStatus.NETWORK_ERROR, null);
-        } finally {
-            try {
-                wb.close();
-            } catch (IOException ignored) {
-                // Nothing useful to do here; the bytes are already out.
+            FetchResult result = httpGet(url);
+            if (result.status != FetchStatus.OK) {
+                Log.w(TAG, "Table " + table[0] + " failed (" + result.status
+                        + "); aborting database sync without touching the stored data.");
+                return new DatosAppResult(result.status, null);
             }
-        }
-    }
 
-    /**
-     * Converts one table's CSV payload into a sheet named exactly as {@link ActualizarDatos}
-     * and {@link Methods#initializeData} expect. Reuses the parser's own quote-aware CSV
-     * reader rather than keeping a second implementation.
-     *
-     * @return false if the payload carries no header or no data rows, which aborts the sync.
-     */
-    private static boolean appendCsvAsSheet(XSSFWorkbook wb, String sheetName, byte[] body) {
-        String text = stripBom(new String(body, StandardCharsets.UTF_8));
-        Sheet sheet = wb.createSheet(sheetName);
-
-        int rowCount = 0;
-        char delimiter = ',';
-        boolean delimiterDetected = false;
-        for (String line : text.split("\r\n|\n|\r")) {
-            if (line.isEmpty()) continue; // trailing newline / blank separator
-            if (!delimiterDetected) {
-                delimiter = ActualizarDatos.detectCsvDelimiter(line);
-                delimiterDetected = true;
+            Tabla tabla = Tabla.fromCsv(table[1], new String(result.body, StandardCharsets.UTF_8));
+            if (tabla.rowCount() < 1 || tabla.columnCount() < 1) {
+                Log.w(TAG, "Table " + table[1] + " came back with " + tabla.rowCount()
+                        + " data row(s); refusing to overwrite the local database.");
+                return new DatosAppResult(FetchStatus.NO_DATA, null);
             }
-            List<String> columns = ActualizarDatos.parseCsvLine(line, delimiter);
-            Row row = sheet.createRow(rowCount++);
-            for (int i = 0; i < columns.size(); i++) {
-                row.createCell(i).setCellValue(columns.get(i));
-            }
+            tablas.put(table[1], tabla);
         }
 
-        if (rowCount < 2) {
-            Log.w(TAG, "Sheet " + sheetName + " came back with " + rowCount
-                    + " row(s); refusing to overwrite the local database.");
-            return false;
-        }
-        return true;
+        return new DatosAppResult(FetchStatus.OK, tablas);
     }
-
-    /**
-     * Removes a leading UTF-8 BOM, which this endpoint puts on every file.
-     *
-     * Not cosmetic: {@link Methods} resolves every column by header name and compares with
-     * String.trim(), which does NOT strip U+FEFF. A BOM'd first header (BOM + finca_id,
-     * BOM + referencia) would resolve to index -1 and the finca and producto lookups would
-     * silently return empty lists.
-     */
-    private static String stripBom(String text) {
-        return (!text.isEmpty() && text.charAt(0) == '\uFEFF') ? text.substring(1) : text;
-    }
-
     /**
      * Runs on the UI thread. Applies the outcome and returns the message to show the técnico,
      * or null when the outcome needs no dialog.
@@ -477,10 +418,10 @@ public class InventarioSync {
     private static String handleDatosAppResult(Activity activity, Context appContext, DatosAppResult result) {
         switch (result.status) {
             case OK:
-                if (ingestDatosApp(activity, result.workbook)) {
+                if (ingestDatosApp(activity, result.tablas)) {
                     Methods.setLastDatosAppSyncDate(appContext, todayString());
                 }
-                // A rejected workbook already surfaced the parser's own message and leaves the
+                // Rejected data already surfaced the validation message and leaves the
                 // day unmarked, so the next login retries. Silent on success.
                 return null;
             case AUTH_ERROR: // 401 — bad/missing key. Non-fatal: the técnico keeps working.
@@ -498,32 +439,24 @@ public class InventarioSync {
     }
 
     /**
-     * Hands the assembled workbook to the existing parser, which detects the "Tecnicos" sheet,
-     * validates every required sheet and column, and stores it as "Datos App.xlsx" — identical
-     * to opening the file from email. Runs on the UI thread with an Activity context so the
-     * parser's dialogs behave correctly.
+     * Hands the downloaded tables to the shared validate-persist-adopt path, which applies exactly
+     * the same structure checks as a workbook opened from the correo and then makes the data live
+     * for this session (so the técnico is not working against the previous database until a
+     * restart). Runs on the UI thread with an Activity context so the validation dialogs behave
+     * correctly.
      *
-     * @return true once the parser has accepted and saved the file.
+     * Catches {@link Throwable}, not Exception: an OutOfMemoryError here used to escape to the main
+     * looper and crash the app on the login screen, and since the stored database had already been
+     * replaced while the daily guard had not advanced, every subsequent launch retried and crashed
+     * again. A failed ingest must always degrade to "could not update", never to a crash loop.
+     *
+     * @return true once the tables are validated, persisted and live.
      */
-    private static boolean ingestDatosApp(Activity activity, byte[] workbook) {
+    private static boolean ingestDatosApp(Activity activity, Map<String, Tabla> tablas) {
         try {
-            File cacheFile = new File(activity.getCacheDir(), "DatosApp_sync.xlsx");
-            try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
-                fos.write(workbook);
-            }
-            String result = ActualizarDatos.setFileInputStream(activity, Uri.fromFile(cacheFile));
-            // processAndValidateWorkbook returns "Base de Datos" once the file has been saved.
-            if (!"Base de Datos".equals(result)) {
-                Log.w(TAG, "Parser did not accept the assembled database workbook: " + result);
-                return false;
-            }
-            // Methods.initializeData() ran before login, so the sheets in memory are still the
-            // previous file's: refresh them in place or the técnico works against stale
-            // clientes/productos/tarifas for the rest of the session.
-            Methods.reloadDatosApp(activity);
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error ingesting the Datos App workbook", e);
+            return ActualizarDatos.ingestDatosAppTables(activity, tablas);
+        } catch (Throwable t) {
+            Log.e(TAG, "Error ingesting the Datos App tables", t);
             return false;
         }
     }

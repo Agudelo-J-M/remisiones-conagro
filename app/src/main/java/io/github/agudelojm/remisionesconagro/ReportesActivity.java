@@ -81,21 +81,20 @@ public class ReportesActivity extends AppCompatActivity {
     }
 
     private void actualizarAutocomplete(int type) {
-        List<String> suggestions = new ArrayList<>();
-        if (type == 0) { // Producto
-            suggestions = Methods.getListaProductos();
-        } else if (type == 1) { // Remision
-            List<Map<String, String>> rems = Methods.getListaRemisiones(this);
-            for (Map<String, String> r : rems) {
-                suggestions.add(r.get("consecutivo"));
+        if (type == 1) { // Remision — a short list of consecutivos, nothing to optimize
+            List<String> consecutivos = new ArrayList<>();
+            for (Map<String, String> r : Methods.getListaRemisiones(this)) {
+                consecutivos.add(r.get("consecutivo"));
             }
-        } else if (type == 2) { // Finca
-            suggestions = Methods.getListaFincas();
+            edtInput.setAdapter(new ArrayAdapter<>(this,
+                    android.R.layout.simple_dropdown_item_1line, consecutivos));
+            return;
         }
-        
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_dropdown_item_1line, suggestions);
-        edtInput.setAdapter(adapter);
+
+        // Productos (4 800+) and fincas (2 400+) are far too long for the default filter, which
+        // rescans and re-lowercases every entry on each keystroke.
+        List<String> suggestions = (type == 2) ? Methods.getListaFincas() : Methods.getListaProductos();
+        edtInput.setAdapter(new CodigoNombreAdapter(this, suggestions));
     }
 
     private void ejecutarBusqueda() {

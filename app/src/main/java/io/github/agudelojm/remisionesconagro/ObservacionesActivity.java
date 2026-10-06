@@ -33,6 +33,15 @@ public class ObservacionesActivity extends AppCompatActivity {
      */
     static final String SIN_OBSERVACIONES = "Sin observaciones";
 
+    /** Intent keys, named here so a caller cannot quietly misspell one into a no-op. */
+    static final String EXTRA_TITULO = "titulo";
+    static final String EXTRA_SUBTITULO = "subtitulo";
+    static final String EXTRA_BOTON_TEXTO = "botonTexto";
+    static final String EXTRA_PRELLENADO = "prellenado";
+    static final String EXTRA_OBLIGATORIO = "obligatorio";
+    /** Key this screen returns its text under. */
+    static final String RESULT_OBSERVACIONES = "observaciones";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -45,29 +54,29 @@ public class ObservacionesActivity extends AppCompatActivity {
         EditText edtObs = findViewById(R.id.edt_Observaciones);
         Button btnNext = findViewById(R.id.btn_Siguiente_Observaciones);
 
-        String titulo = getIntent().getStringExtra("titulo");
+        String titulo = getIntent().getStringExtra(EXTRA_TITULO);
         if (titulo != null && !titulo.isEmpty()) {
             tvwTitulo.setText(titulo);
         }
 
-        String subtitulo = getIntent().getStringExtra("subtitulo");
+        String subtitulo = getIntent().getStringExtra(EXTRA_SUBTITULO);
         if (subtitulo != null && !subtitulo.isEmpty()) {
             tvwInfo.setText(subtitulo);
         }
 
-        String botonTexto = getIntent().getStringExtra("botonTexto");
+        String botonTexto = getIntent().getStringExtra(EXTRA_BOTON_TEXTO);
         if (botonTexto != null && !botonTexto.isEmpty()) {
             btnNext.setText(botonTexto);
         }
 
-        boolean obligatorio = getIntent().getBooleanExtra("obligatorio", false);
+        boolean obligatorio = getIntent().getBooleanExtra(EXTRA_OBLIGATORIO, false);
         if (obligatorio) {
             // The layout's default hint ("Sin observaciones...") invites leaving the field
             // empty, which is exactly what a mandatory field must not suggest.
             edtObs.setHint("Escriba aquí...");
         }
 
-        String prellenado = getIntent().getStringExtra("prellenado");
+        String prellenado = getIntent().getStringExtra(EXTRA_PRELLENADO);
         if (prellenado != null && !prellenado.isEmpty()) {
             edtObs.setText(prellenado);
             // Read the length back from the field, not from prellenado: the layout caps this
@@ -95,7 +104,7 @@ public class ObservacionesActivity extends AppCompatActivity {
             if (obs.isEmpty()) obs = SIN_OBSERVACIONES;
 
             Intent result = new Intent();
-            result.putExtra("observaciones", obs);
+            result.putExtra(RESULT_OBSERVACIONES, obs);
             setResult(RESULT_OK, result);
             finish();
         });

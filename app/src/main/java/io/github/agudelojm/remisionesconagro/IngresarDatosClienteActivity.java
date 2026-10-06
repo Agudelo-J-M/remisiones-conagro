@@ -84,7 +84,7 @@ public class IngresarDatosClienteActivity extends AppCompatActivity {
                     "Cliente: " + nom + " | Tel: " + tel + " | Email: " + email;
 
             Intent result = new Intent();
-            result.putExtra("observaciones", formattedObs);
+            result.putExtra(ObservacionesActivity.RESULT_OBSERVACIONES, formattedObs);
             setResult(RESULT_OK, result);
             finish();
         });
