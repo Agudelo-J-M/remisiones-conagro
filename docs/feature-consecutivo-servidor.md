@@ -115,12 +115,49 @@ Optional, cheap, and worth asking for in the same breath:
 
 ## 6. App changes
 
-**Wire format: a plain integer sequence (`seq=45`), never a formatted id.** The server displays
-`3-000045` in its column, the app formats `03000045` for filenames/PDF/intents (`%02d%06d`), and
-neither has to know the other's shape. On the read side, parse the column with the existing
-robust rule — **the last 6 digits are the sequence** — after checking the prefix digits match this
-técnico's `numero`, so `1-000001` and `01000001` both work and one técnico can never inherit
-another's series.
+**Wire format: a plain integer sequence (`seq=45`), never a formatted id.** The server stores and
+displays `3-000045`; the app sends only `45` and lets the server compose the string, so the
+definitive format is written in exactly one place and the two sides cannot drift. On the read
+side, parse the column with the robust rule — **the last 6 digits are the sequence** — after
+checking the prefix digits match this técnico's `numero`, so `1-000001` and `01000001` both work
+and one técnico can never inherit another's series.
+
+### 6.0 The visible format is `NUMERO-NNNNNN` (owner's call, 2026-10-16)
+
+**This is a defect in today's build, not a new requirement, and it is independent of the write
+endpoint — it can ship with Phase 1.** The owner states that `3-000045` (unpadded prefix, hyphen,
+6-digit sequence) is the definitive consecutivo: it is how the office seeded the `CONSECUTIVO`
+column, how they want it on the remisión PDF, and how it must read everywhere a human sees it.
+
+The app does not produce that string anywhere today. `Methods.formatConsecutivo`
+(`Methods.java:934`) returns `format2Digitos(numero) + "%06d"` → **`03000045`**, and that is what
+`generarPDFRemision` prints as `REMISIÓN: 03000045` (`Methods.java:1634`).
+
+**The trap: that same string is the storage key.** It names `Remision_03000045.json` and
+`firma_{tecnico,cliente}_03000045.png`, and `Methods.reconcileConsecutivo` (`Methods.java:1087`)
+rebuilds the local floor by parsing those filenames as `<2-digit prefix><exactly 6 digits>` —
+`id.length() == fPrefix.length() + 6`. Reformatting the shared string would silently break the
+14-day self-heal on every phone that already has saved remisiones.
+
+So: **split the internal id from the visible format.**
+
+| | value | used by |
+|---|---|---|
+| internal id (unchanged) | `03000045` | `Remision_*.json`, `firma_*_*.png`, `reconcileConsecutivo`, `commitConsecutivo`, the `consecutivo` intent extra |
+| visible (new) | `3-000045` | the PDF (`REMISIÓN:`), the email subject, the PDF attachment filename, the `CONSECUTIVO` column |
+
+- New `Methods.formatConsecutivoVisible(tecnicoNumero, seq)` → `numero.trim() + "-" + %06d`, with
+  the **unpadded** prefix (the server's seed is `3-000001`, not `03-000001`).
+- `formatConsecutivo` stays exactly as it is. Nothing that touches a filename changes.
+- A `Methods.seqDe(String consecutivo)` reads the sequence back out of either shape (last 6
+  digits), so a visible string and an internal id are interchangeable as input.
+- Call sites: `generarPDFRemision`'s header draw, the `EXTRA_SUBJECT` in `IngresarRemisionActivity`
+  (~line 619) and `EditarRemisionActivity`, the attachment filename, and the `seq` the claim sends.
+
+**Already-sent remisiones keep `03000045` (owner's call).** There is no migration and no PDF is
+regenerated — they are already in the office's mailbox. The office will see both shapes side by
+side for a while; the cutover is the build date. The *files on disk* keep the old shape forever by
+design, which is the whole point of the split.
 
 ### `Methods` (consecutivo block, ~line 914 onward)
 
@@ -286,6 +323,9 @@ required). None of them changes the app's design.
   practice. Nothing is deleted, so reinstating it is one XML attribute.
 - **No per-remisión upload.** The app does not post remisión contents anywhere; only a counter.
   (The PDFs keep going to the office by email, which stays the record of *what* was sent.)
+- **`NUMERO-NNNNNN` is the visible format; `%02d%06d` stays the storage key** (§6.0, owner's call
+  2026-10-16). The split exists because `reconcileConsecutivo` parses the filename, not because
+  two formats are desirable. Already-sent remisiones are **not** migrated or regenerated.
 
 ## 12. Open questions — the two that block coding
 
@@ -319,6 +359,11 @@ installs tables through the real `Methods.adoptDatosApp`, so no new seam is need
   resolved floor is persisted; `isConsecutivoInicializado` true on a server value alone.
 - Outbox: `hayConsecutivoPendiente` transitions; a confirmed value equal to stored clears it;
   a claim response **higher** than local raises the floor.
+- §6.0 format: `formatConsecutivoVisible(3, 45)` -> `3-000045` (prefix **unpadded**);
+  `(11, 1)` -> `11-000001`; `(3, 999999)`; a non-numeric `numero` falls back to the trimmed raw
+  value. `seqDe` reads 45 out of `3-000045`, `03000045` and `11-000045`, and returns -1 for blank,
+  null and non-numeric. And the invariant that matters: `formatConsecutivo` is **byte-for-byte
+  unchanged** for the same inputs, since the saved filenames depend on it.
 - Margin: next-multiple-of-100 from 45, 99, 100, 101, 4 850; and that it is applied **only** when
   there is no local history.
 
@@ -344,12 +389,21 @@ a wipe):
    continues the server's series.
 7. **Column absent** (older stored database, or a server rollback): login succeeds, numbering is
    purely local, no fatal dialog — i.e. exactly pre-R8 behaviour.
+8. **The visible format** (§6.0) — create a new remisión: the PDF must read
+   `REMISIÓN: 3-000045` with the hyphen, the email subject the same, and the attachment must be
+   named that way too. On the same phone, `Modificar Remisión` must still open every older
+   remisión (whose files are named `Remision_03000044.json`) — that list and `reconcileConsecutivo`
+   read the internal id, which did not change. Also confirm the next number is still correct after
+   a relaunch, which is `reconcileConsecutivo` proving it can still parse the filenames.
 
 ## 14. Change map & sequencing
 
 | File | Change |
 |---|---|
 | `Methods.java` | `getSeqServidor`, `getConsecutivoFloor`, `get/setSeqConfirmado`, `hayConsecutivoPendiente`, `MARGEN_REINSTALACION`; `peekProximoConsecutivo` takes the server seq; `isConsecutivoInicializado` accepts a server value; `validateCredentials` exports `consecutivoServidor`. |
+| `Methods.java` (§6.0) | `formatConsecutivoVisible(numero, seq)` and `seqDe(String)`; `formatConsecutivo` and every filename untouched. Ships with Phase 1. |
+| `IngresarRemisionActivity` / `EditarRemisionActivity` (§6.0) | Visible format in `EXTRA_SUBJECT` and the PDF attachment name. |
+| `Methods.generarPDFRemision` (§6.0) | `REMISIÓN: ` prints the visible format (`Methods.java:1634`). |
 | `InventarioSync.java` | `pushConsecutivoIfPending` (background, no daily guard, silent) and `claimConsecutivoBlocking` (the fresh-install gate only). |
 | `MenuActivity.java` | Fire the pending push at login, beside the bodega sync. |
 | `IngresarRemisionActivity.java` | Push after `commitConsecutivo`; the reworded fresh-install gate. |
@@ -362,12 +416,14 @@ a wipe):
 **Order of work**, so nothing waits on the client unnecessarily:
 
 1. **Phase 1 — read side, ships without the endpoint.** `getSeqServidor` + the floor + the
-   `consecutivoServidor` plumbing + host tests. Already useful on its own: the office can set a
-   floor by typing in the column, and a reinstalled phone picks it up. Does **not** retire the
-   manual flow on its own (§2: a read-only column cannot).
+   `consecutivoServidor` plumbing + **the §6.0 visible format** + host tests. Already useful on
+   its own: the office can set a floor by typing in the column, a reinstalled phone picks it up,
+   and the PDF finally carries the format the office asked for. Does **not** retire the manual
+   flow on its own (§2: a read-only column cannot).
 2. **Client builds §5.** Send them that section verbatim; the two §12 answers come with it.
 3. **Phase 2 — write side.** The push, the outbox, the margin, the new gate, the demotion of
    `CambiarConsecutivoActivity`. This is the phase that actually retires the manual flow.
 
-Phase 1 is maybe 60 lines and a test class. Phase 2 is the work, but it has no POI, no file
-format and no UI of consequence — it is one GET, one integer of state, and five call sites.
+Phase 1 is maybe 60 lines, plus §6.0 (another ~15 and five call sites), plus a test class. Phase 2
+is the work, but it has no POI, no file format and no UI of consequence — it is one GET, one
+integer of state, and five call sites.
