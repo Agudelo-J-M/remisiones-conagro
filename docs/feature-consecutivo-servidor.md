@@ -166,7 +166,7 @@ New `pushConsecutivoIfPending(activity, numero, cedula)`:
   and audited like any other value. The office email it already sends stays as the human record.
 - `EditarRemisionActivity` — **nothing.** It reuses the existing number and never increments.
 
-## 7. Offline behaviour, and what "retire the manual flow" actually means
+## 7. Offline behaviour, and retiring the manual flow
 
 **Offline is the normal case, not the exception, and nothing about it may depend on the network.**
 
@@ -177,29 +177,50 @@ New `pushConsecutivoIfPending(activity, numero, cedula)`:
   push just claims the highest. Ordering, retries and duplicate pushes are all no-ops (§3).
 - Pushes drain at the next connected app open, or right after the next send.
 
-**The manual re-seed flow is demoted, not deleted — and this is a recommendation the owner should
-actively confirm.** Once the server is authoritative, `CambiarConsecutivoActivity` stops being the
-normal recovery path (a reinstall with network needs no ritual at all, which is the point of R8).
-But it must remain *reachable*, because there is exactly one state the server cannot rescue:
+### A first install always has network (owner, 2026-10-16)
 
-> a fresh install **with no network**, for a técnico who has never claimed from this device.
+This closes the one hole the design was worried about. **The app cannot function on a fresh
+install without connectivity anyway** — it needs the `productos` and `clientes` tables to write a
+remisión at all, and on a phone with no database `InventarioSync` blocks behind the "Descargando
+base de datos" dialog and ignores the daily guard precisely because `initializeData` would
+otherwise reach its app-closing fatal dialog. So "fresh install, no network, needs a number" is
+not a state a técnico can usefully be in: they would have no products to sell.
 
-Deleting the flow means that técnico cannot work at all in the field. Keeping it means they can,
-with the existing friction (cédula re-auth -> double entry -> reason -> office email -> confirm),
-and the value they type gets claimed the moment connectivity returns, where the server's `max()`
-reconciles it. Proposal: keep the activity, keep the menu entry, and reword its screen as a
-recovery tool ("solo si no tiene internet / indicación de la oficina").
+The one residual path is a técnico who imports `Datos App.xlsx` from the correo with no
+connectivity (that route skips the web sync by design). Narrow — receiving the mail implies they
+had a network — and it resolves itself the moment any connectivity appears, since the claim then
+lands. Not worth designing for.
+
+### `CambiarConsecutivoActivity`: button removed, code kept (owner's call, 2026-10-16)
+
+The flow is **retired from the UI but left intact in the codebase**, so it can be reinstated
+without rebuilding it:
+
+- **Remove the entry point only.** `android:visibility="gone"` on `btn_CambiarConsecutivo` in
+  `activity_menu.xml` (~line 123) is the whole change — a `gone` view is excluded from the
+  `layout_weight` distribution exactly as a deleted one would be, so reinstating the flow is a
+  one-attribute edit. Note the remaining menu buttons grow to fill the space; that is expected.
+- **Keep** the activity class, its layout, its `strings.xml` entry, its manifest entry
+  (`AndroidManifest.xml:65`) and the `setOnClickListener` at `MenuActivity.java:99` — all of it
+  compiles and works, it is simply unreachable. Do **not** delete the manifest entry: a
+  reinstatement would then crash, and nothing is gained by removing it.
+- **Still wire the claim into it** (§6), so a reinstated flow is complete on day one and a
+  hand-seeded value would be pushed and audited like any other.
+- Its `ObservacionesActivity` integration (`flowType = "cambio_consecutivo"`, the mandatory-motivo
+  validation from the R7 review pass) stays as-is and keeps its unit tests.
 
 ### The fresh-install gate (replaces `feature-consecutivo-remision.md` §8)
 
 At `IngresarRemisionActivity` entry (the authoritative gate, ~line 120):
 
-1. A floor exists locally or from the server -> proceed, no prompt. **This is the new normal.**
+1. A floor exists locally or from the server -> proceed, no prompt. **This is the new normal, and
+   with the server authoritative it is what every reinstall hits.**
 2. No floor and **network available** -> `claimConsecutivoBlocking` behind a short spinner; on
    success proceed silently. The técnico sees nothing but a brief wait.
-3. No floor and **no network** -> the existing block, but reworded to offer both routes:
-   "Conéctese a internet para obtener su consecutivo, o use Cambiar Consecutivo si la oficina
-   le indicó un número."
+3. No floor and **no network** -> block, with a message that now has no self-service escape:
+   "Conéctese a internet para obtener su consecutivo." Per the above this is close to
+   unreachable; the office's recourse is to type a value into the `CONSECUTIVO` column, which the
+   next sync picks up as a floor (§4).
 
 ## 8. The reinstall margin — turning a possible duplicate into a visible gap
 
@@ -259,7 +280,10 @@ required). None of them changes the app's design.
 - **`CONSECUTIVO` is a superset column, not a required one** (§4).
 - **Push is fire-and-forget and silent.** No alert, ever, on a push failure. The técnico cannot
   act on it and the state is self-healing.
-- **The manual flow is demoted, not deleted** (§7) — pending the owner's confirmation.
+- **The manual flow keeps its code but loses its button** (§7). Decided by the owner on
+  2026-10-16, not an open recommendation: a first install always has network (it cannot bootstrap
+  `productos`/`clientes` without it), so the no-network escape it existed for is unreachable in
+  practice. Nothing is deleted, so reinstating it is one XML attribute.
 - **No per-remisión upload.** The app does not post remisión contents anywhere; only a counter.
   (The PDFs keep going to the office by email, which stays the record of *what* was sent.)
 
@@ -304,8 +328,11 @@ a wipe):
 1. **Reinstall with network, the headline case.** Send a few remisiones, note the last number,
    clear app data, log in: **no re-seed prompt**, and the first new remisión lands at the next
    hundred above the server's value. Verify no number is ever reused.
-2. **Reinstall with no network.** The gate offers both routes; the manual flow still works; the
-   value typed reaches the server on the next connected launch.
+2. **Reinstall with no network.** Expected to be a dead end now, and that is the design: the
+   gate blocks with "Conéctese a internet". Confirm it blocks *cleanly* (no crash, no half-state,
+   the técnico can still browse everything else) and that plugging in a network then lets the
+   first remisión through with no prompt. Also confirm the menu no longer offers Cambiar
+   Consecutivo and that the remaining buttons lay out sensibly without it.
 3. **Offline streak.** Airplane mode, send 3 remisiones -> they number normally and silently;
    restore network, reopen the app -> logcat shows one claim, the `CONSECUTIVO` column catches up
    to the highest number on the next daily read.
@@ -326,7 +353,8 @@ a wipe):
 | `InventarioSync.java` | `pushConsecutivoIfPending` (background, no daily guard, silent) and `claimConsecutivoBlocking` (the fresh-install gate only). |
 | `MenuActivity.java` | Fire the pending push at login, beside the bodega sync. |
 | `IngresarRemisionActivity.java` | Push after `commitConsecutivo`; the reworded fresh-install gate. |
-| `CambiarConsecutivoActivity.java` | Push after the manual seed; reword as a no-network/office-instructed recovery tool. |
+| `CambiarConsecutivoActivity.java` | Wire the claim in after the manual seed, so a reinstatement is complete on day one. The flow stays unreachable. |
+| `activity_menu.xml` | `android:visibility="gone"` on `btn_CambiarConsecutivo` (~line 123) — the only UI change in R8. Keep the class, layout, string, manifest entry (`AndroidManifest.xml:65`) and the listener at `MenuActivity.java:99`; see §7. |
 | `ActualizarDatos.java` | **No change** — `CONSECUTIVO` stays out of `REQUIRED_HEADERS`. |
 | `app/build.gradle.kts`, `local.properties` | `SET_CONSECUTIVO_URL` into `BuildConfig`, same pattern as `DATOS_APP_URL`. |
 | (follow-up) `ReportesActivity` | The gap report the client actually wants, now that the office holds a real series. Out of scope for R8. |
