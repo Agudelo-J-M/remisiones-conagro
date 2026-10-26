@@ -1,7 +1,10 @@
 # Feature Plan — Consecutivo servidor-autoritativo (R8)
 
-> **Status:** Designed, NOT implemented. **Blocked on the client** for one server-side write
-> endpoint (§5) and two semantic answers (§12).
+> **Status:** **Server side DEPLOYED and verified live 2026-10-26** — `set_consecutivo.php` is up,
+> and `get_datos_app.php` now merges the counter into the `CONSECUTIVO` column it serves. See
+> **§5.1** for exactly what was built, including three deviations from §5 as written. **No app
+> code exists yet:** Phase 1 and Phase 2 (§14) are both unstarted, and Phase 2 is no longer blocked
+> on anyone. **§12 Q1 is still open** and is the one answer Phase 1 needs.
 > **Author of design:** planning session, 2026-10-16. Supersedes the "no server to be the source
 > of truth" premise of `feature-consecutivo-remision.md` §2 — read that doc first; everything it
 > says about the ID format, the assign-at-commit lifecycle and the gated re-seed flow still holds
@@ -79,7 +82,7 @@ next  = floor + 1
   fire the app-closing dialog — the same reasoning locked in for `CORREO OFICINA`). Absent
   column -> `Log.w` + today's purely-local behaviour + the manual flow stays reachable.
 
-## 5. What the client has to build (the only blocking dependency)
+## 5. The write endpoint as specified to the client (BUILT — see §5.1 for what shipped)
 
 One script. It may stay GET-shaped to match the rest of their API; the app does not care.
 
@@ -112,6 +115,106 @@ Optional, cheap, and worth asking for in the same breath:
   stretch. Without it the log shows only `45 -> 48`.
 - **`device=<install id>`** — lets the server flag two devices claiming for one técnico, which is
   the phone-swap failure in §9 and is otherwise invisible to everyone.
+
+## 5.1 What was actually deployed (2026-10-26) — the authoritative record
+
+The client handed the owner cPanel access rather than finishing the work, so the owner deployed it
+himself with this session guiding. §5 above is the spec as negotiated; **this section is what the
+server does.** Where they disagree, this section wins.
+
+### The server, as it really is
+
+- **`/home3/conagrocom/conagro.com.co/reportesbodega/` is a private FTP folder, not web-served.**
+  The ERP uploads into it. `db_config.php` lives here, outside the published area.
+- `datos_app/` inside it holds **four separately exported CSVs** — which is the long-standing
+  explanation for why the four payloads never agreed on delimiter, quoting or BOM. **There is no
+  `.xlsx` on the server at all.**
+- **`/reportes-api/` is the only published folder**: `get_reporte.php`, `get_datos_app.php`
+  (+ a `.bak` of the pre-merge version) and now `set_consecutivo.php`.
+- `tecnicos.csv` is **ISO-8859**, CRLF, `;`-delimited, unquoted, served raw under
+  `charset=utf-8`. Two surnames therefore reach the app as invalid UTF-8. Pre-existing, cosmetic,
+  untouched.
+
+### Storage
+
+MySQL `conagrocom_remisiones`:
+
+- **`tecnico_consecutivo`** — `numero INT UNSIGNED`, `cedula BIGINT UNSIGNED`,
+  `consecutivo INT UNSIGNED`, `actualizado DATETIME`, `PRIMARY KEY (numero, cedula)`.
+  `cedula` is `BIGINT` deliberately: `numero` 13's cédula is 11 digits and overflows `INT`.
+  The composite PK is what stops two simultaneous first-ever claims inserting duplicate rows
+  (`SELECT … FOR UPDATE` cannot lock a row that does not exist yet).
+- **`consecutivo_log`** — append-only audit: `numero`, `cedula`, `anterior`, `nuevo`, `usados`,
+  `device`, `ip`, `creado`. §5 rule 4, satisfied.
+
+### Three deviations from §5
+
+1. **§5 rule 5 is satisfied by a merge, not by storing the value in the CSV.**
+   `get_datos_app.php` serves `max(CSV cell, MySQL)` in the `CONSECUTIVO` column for
+   `tabla=tecnicos` **only**; the other three tables remain untouched `readfile()`. This is what
+   makes an ERP re-upload of `tecnicos.csv` harmless, and it keeps the office's ability to raise a
+   floor by typing a higher value into the file. **If the database is unreachable the script falls
+   back to the raw file**, so the daily sync can never be broken by the counter.
+2. **`set_consecutivo.php` additionally mirrors the value into the CSV cell** — the owner's call
+   (2026-10-26), so the office can read the file directly. Best-effort and not the authority: a
+   `.lock` file + tmp + `rename()`, replacing one field on one line so the ISO-8859 bytes and CRLF
+   survive byte-for-byte. If it fails, the claim still returns 200 and the merge covers it.
+   Consequence accepted by the owner: after an ERP re-upload only técnicos who claim afterwards get
+   their cell repaired. A `resync_consecutivos.php` was offered and **declined**.
+3. **The response body is `{"numero","seq","consecutivo"}`** — `seq` the integer, `consecutivo` the
+   formatted `3-000045`. The app should read **`seq`**; it must still format locally anyway (§6.0)
+   because an offline remisión gets no response at all.
+
+### Wire contract for Phase 2 (verified against the live endpoint)
+
+```
+GET /reportes-api/set_consecutivo.php?key=…&numero=11&cedula=1&seq=5[&usados=4,5][&device=…]
+  200  {"numero":"11","seq":5,"consecutivo":"11-000005"}   stored, or already higher
+  409  {"numero":"11","seq":5,"consecutivo":"11-000005"}   refused: seq was lower than stored
+  403  numero+cedula do not match a tecnicos row
+  401  bad/missing key
+  400  non-numeric numero/cedula/seq, or seq > 999999
+  500  internal
+```
+
+- **409 is not a failure — it is the authoritative answer.** Adopt the returned `seq` as the floor
+  exactly as on a 200. The only difference is that this phone's value was stale.
+- `usados` and `device` (both optional, §5's extras) are implemented and land in the audit log.
+- **Probing with no `numero`/`cedula`/`seq` returns 400**, so liveness can be checked without
+  moving anybody's counter. Keep doing it that way.
+- Same API key as the other two endpoints, i.e. `BuildConfig.DATOS_APP_KEY`'s value. Phase 2 adds
+  `SET_CONSECUTIVO_URL` to `local.properties`/`BuildConfig` (§14).
+
+### Three bugs fixed in the client's draft before it went live
+
+- **`fgetcsv($fh)` used the default comma delimiter on a `;`-delimited file.** Every line came back
+  as one field, `count($fila) >= 2` was never true, and the endpoint **403'd every técnico** — the
+  whole feature would have been dead on arrival. It now detects the delimiter from the header line,
+  because that export format has already drifted twice.
+- **No cap on `seq`.** The rule is monotonic, so a single call with `seq=999999999` would burn a
+  técnico's series permanently, recoverable only by hand in phpMyAdmin. Now `400` above 999999.
+- **`require __DIR__ . "/db_config.php"`** broke when the script moved into the published folder.
+  Now an absolute path into the private folder.
+
+### Verification, 2026-10-26, test row only (`numero` 11, `cedula` 1)
+
+Guards: no params → 400 · bad key → 401 · wrong cédula → **403** · `seq=1000000` → 400. Claim
+`seq=5` → 200 `11-000005` · replay `seq=3` → **409**, still `11-000005` · replay `seq=5` → 200,
+idempotent. Served `tecnicos` changed **exactly one of 34 lines**; all rows still 8 fields; the
+accented row byte-identical; `tarifas`/`clientes`/`productos` unchanged (50 / 2 423 / 4 863 rows).
+
+The wrong-cédula 403 is the proof the delimiter fix landed: with the original script a *valid*
+call 403'd too, so 403 alone proves nothing — it has to be paired with a successful claim.
+
+**The test row is parked at 5 on purpose.** `numero` 11's first real claim must exceed it.
+
+### Handed to the client (owner is relaying)
+
+- **Keep `CONSECUTIVO` in the export.** If it disappears the row stops matching 8 fields, the
+  mirror silently stops writing, and the app falls back to local-only numbering — which §4
+  tolerates by design, so the failure is invisible.
+- `rename()` leaves `tecnicos.csv` owned by the PHP user; the ERP's FTP upload must still work.
+- `tecnicos.csv.lock` now lives in `datos_app/` and is recreated if deleted.
 
 ## 6. App changes
 
@@ -298,10 +401,12 @@ visible to the office instead of silent.
 ## 10. Security note — this is a new exposure, say it out loud
 
 `DATOS_APP_KEY` is compiled into the APK and the APK is on técnicos' phones. Today a leaked key
-costs *read* access to employee and client data. With a write endpoint it would additionally allow
-moving any técnico's counter. The §5 rules bound the damage to "push a counter forward" (monotonic,
-cédula-matched), which creates visible gaps rather than duplicates or data loss — but the owner
-should hear this before the client ships it. Ask the client for, in order of value:
+costs *read* access to employee and client data. **Since 2026-10-26 the write endpoint is live**, so a leaked
+key additionally allows moving any técnico's counter. The §5 rules bound the damage to "push a
+counter forward" (monotonic, cédula-matched, and now also capped at 999999 — §5.1), which creates
+visible gaps rather than duplicates or data loss. The owner was told this before deploying and
+accepted it; note that rotating the key now costs a new APK release plus `local.properties` plus
+all three PHP files, since all three share one key. Ask the client for, in order of value:
 per-técnico token or HMAC over the parameters > rate limiting per `numero` > the audit log (already
 required). None of them changes the app's design.
 
@@ -326,17 +431,36 @@ required). None of them changes the app's design.
 - **`NUMERO-NNNNNN` is the visible format; `%02d%06d` stays the storage key** (§6.0, owner's call
   2026-10-16). The split exists because `reconcileConsecutivo` parses the filename, not because
   two formats are desirable. Already-sent remisiones are **not** migrated or regenerated.
+- **The margin stays at the next round hundred — do NOT shrink it** (owner raised this 2026-10-26:
+  the consecutivo doubles as the office's count of remisiones sent, so skipping is a real cost).
+  Established while answering it: **normal use never skips** — `peekProximoConsecutivo`
+  (`Methods.java:1117`) only reads, the number is consumed by `commitConsecutivo` on "Sí, enviado"
+  (`IngresarRemisionActivity.java:643`), an abandoned draft reuses its number, and the claim is a
+  `max()` so retries cost nothing. The **only** skip is §8's margin, and only on a device with no
+  local history — where today's build does something strictly worse (next number = **1**, i.e.
+  duplicates, unless the office hand-seeds through the flow we are retiring). The reason not to
+  shrink it: a jump of 7 is indistinguishable from 7 lost remisiones, while a jump to a round
+  hundred cannot be mistaken for anything but a wiped phone. Shrinking trades gap *size* for gap
+  *ambiguity*, and ambiguity is the expensive one — a gap is supposed to mean "a remisión is
+  missing". **The office's real count comes from `consecutivo_log`** (§5.1), which records every
+  claim as `anterior → nuevo` with timestamp and device and therefore separates a reinstall jump
+  from genuine loss; the bare series never can. And no margin is fully safe: a margin of N only
+  protects you if fewer than N remisiones were made offline since the last claim — zero skips
+  *and* zero duplicates would require every number to be confirmed online before use, which the
+  first bullet of this section refuses on purpose.
 
-## 12. Open questions — the two that block coding
+## 12. Open questions — the one that still blocks coding
 
 1. **What does `3-000001` mean: the last used number, or the next one to use?** Every real row
    carries the same value, so it is plainly a seed and not real data — but the whole series is off
    by one if this is guessed. This plan assumes **last used** (consistent with
    `app_config.json`'s `consecutivos`, where next = value + 1). If the client means "next", the
    server must subtract one when seeding, or `getSeqServidor` must, once, forever.
-2. **Does the client accept the write endpoint as specified in §5**, in particular the monotonic
-   rule and the cédula check? Everything else in R8 is implementable without them; the duplicate
-   elimination is not.
+2. **CLOSED 2026-10-26 — the endpoint is deployed and verified.** The client accepted the §5 spec
+   on 2026-10-22, then handed the owner cPanel access instead of finishing; the owner deployed it
+   himself. **§5.1 is the record of what is actually running**, including the three deviations.
+   Phase 2 no longer waits on anybody. There is no `get_consecutivo.php` and none is needed — the
+   value comes back inside `tabla=tecnicos`.
 
 Non-blocking, ask when convenient:
 
@@ -420,9 +544,12 @@ a wipe):
    its own: the office can set a floor by typing in the column, a reinstalled phone picks it up,
    and the PDF finally carries the format the office asked for. Does **not** retire the manual
    flow on its own (§2: a read-only column cannot).
-2. **Client builds §5.** Send them that section verbatim; the two §12 answers come with it.
+2. ~~**Client builds §5.**~~ **DONE 2026-10-26** — deployed and verified by the owner; read §5.1
+   before writing Phase 2, because the wire contract there is the tested one.
 3. **Phase 2 — write side.** The push, the outbox, the margin, the new gate, the demotion of
-   `CambiarConsecutivoActivity`. This is the phase that actually retires the manual flow.
+   `CambiarConsecutivoActivity`. This is the phase that actually retires the manual flow. **No
+   longer blocked.** Remember that a **409 is an authoritative answer, not an error** — adopt the
+   `seq` it returns exactly as on a 200.
 
 Phase 1 is maybe 60 lines, plus §6.0 (another ~15 and five call sites), plus a test class. Phase 2
 is the work, but it has no POI, no file format and no UI of consequence — it is one GET, one
