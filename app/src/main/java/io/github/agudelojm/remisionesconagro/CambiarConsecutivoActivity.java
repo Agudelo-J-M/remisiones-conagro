@@ -313,10 +313,11 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
 
         refreshDisplay();
 
-        // The floor can legitimately override a below-floor re-seed: R8's rule is that no
-        // operation ever lowers a counter, and the server's value is one of the floor's inputs.
-        // So report what will ACTUALLY be used. Announcing the typed number while storage already
-        // holds something higher is how this dialog used to lie to the técnico.
+        // Report what will ACTUALLY be used, never the typed number. validateEntry already
+        // refuses a seed below the floor, so this is a backstop rather than the normal path —
+        // but the floor can still move underneath it (the push above can come back 409 with a
+        // higher value the office holds). Announcing the typed number while storage holds
+        // something higher is how this dialog used to lie to the técnico.
         String pedido = Methods.formatConsecutivoVisible(tecnicoNumero, pendingSeedSeq + 1);
         String efectivoInterno = Methods.peekProximoConsecutivo(this, userData);
         String esperadoInterno = Methods.formatConsecutivo(tecnicoNumero, pendingSeedSeq + 1);

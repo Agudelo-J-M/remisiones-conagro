@@ -733,6 +733,10 @@ re-seed to 50 would be sent with **no push at all** while the server kept 100. F
 `Methods.bajarSeqConfirmado`, called from `applyChange`. Only reachable with the button re-enabled —
 which is exactly why the guard lives in `Methods` and not in the screen.
 
+> **SUPERSEDED by §17.** The third review found this fix made the push unreachable in the very
+> case it was written for, and that the below-floor re-seed could not be honoured at all. The
+> below-floor path is now refused and `bajarSeqConfirmado` is deleted.
+
 **LOW — `formatConsecutivoVisible` used `Locale.getDefault()`.** Its output is now a PDF filename
 and an email subject, so a locale with non-ASCII decimal digits would produce an attachment name and
 an outbound identifier nobody could read back, `seqDe` included. Now `Locale.US`.
@@ -740,3 +744,73 @@ an outbound identifier nobody could read back, `seqDe` included. Now `Locale.US`
 `firma_*.png` files that `reconcileConsecutivo` parses, so changing its locale would stop it
 recognising files an affected device had already written — dropping the floor, which is the
 duplicate case. The pre-existing exposure there is left alone on purpose.
+
+## 17. Third code review, 2026-10-26 — ten findings (this session finished them, 2026-10-30)
+
+The session that ran this review hit its usage limit **mid-fix**, leaving the tree uncompilable
+(four `cannot find symbol` errors in `IngresarRemisionActivity` — the gate had been rewritten to
+call three helpers that were never added). Picked up and completed 2026-10-30; the whole set is
+below so nobody re-derives it.
+
+### The one that changed the design, not just the code
+
+**MEDIUM ×2, resolved together — a seed below the floor cannot be honoured at all, so it must not
+be offered.** Review #2 had said a downward re-seed left `consecutivosConfirmados` high, so the
+re-minted range would never be pushed; #3 found that the fix for that (`bajarSeqConfirmado`) made
+the push *unreachable* in exactly the case it was written for — `applyChange` set `stored` and
+`confirmado` to the same value, so `hayConsecutivoPendiente` was false and nothing was sent — **and**
+that confirming the below-floor warning did nothing anyway: `applyChange` stored the typed number
+and the next `peekProximoConsecutivo` recomputed `max(local, archivos, servidor)` and persisted the
+old floor straight back. The dialog also blamed the server unconditionally, sending the técnico to
+call the office about a number the office may not hold.
+
+Both are symptoms of one thing: the server is monotonic and §11 locks "nothing ever lowers a
+counter", so **"Sí, continuar" was the bug**. The below-floor case is now **refused** ("Número no
+permitido", with the effective number and the instruction to ask the office to correct it in the
+server). `Methods.bajarSeqConfirmado` is **deleted** — it existed only to serve a path that no
+longer exists, so the §16 entry describing it is superseded by this one.
+
+### Fixed as found
+
+- **MEDIUM — the blocking claim reported success without proving a counter exists.** The gate
+  treated any `seq >= 0` as success, but `adoptClaim` only writes when the value is higher and
+  `setStoredConsecutivo` swallows IO failures — so a `{"seq":0}` answer or a failed
+  `app_config.json` write opened the screen with no counter, and the first remisión would be minted
+  as `…000001`, duplicating the técnico's whole history. `claimConsecutivoConMargen` now re-checks
+  `isConsecutivoInicializado` after adopting and reports -1 (→ the manual fallback) if the counter
+  did not land.
+- **LOW — `adoptClaim`'s compare-then-write was not atomic**, contradicting its own comment: two
+  separate `synchronized` accessors, so a `commitConsecutivo` landing between them was overwritten
+  by a value already stale when read — i.e. the counter could be *lowered*. It only survived
+  because `reconcileConsecutivo` re-reads the remisión files. Now one critical section,
+  `Methods.subirStoredConsecutivo`.
+- **LOW — `usados=` was capped by count, not length.** 40 six-digit sequences plus commas is 279
+  characters against the server's 255-char column, so the margin vanished as the series grew and
+  the server would truncate mid-number. Now capped at 240 **characters**, newest first.
+- **LOW — `formatConsecutivoVisible` did not normalize the número**, while `visibleDeConsecutivo`
+  parses it as an int. A Tecnicos cell reading `03` would have printed `03-000045` in the Cambiar
+  Consecutivo dialogs and the office email while the PDF, subject and Reportes printed `3-000045` —
+  two shapes for one number, in the feature whose premise is a single office format.
+- **LOW — claim parameters went into the URL unencoded.** A rotated `DATOS_APP_KEY` containing `+`
+  is decoded by PHP's `$_GET` as a space → permanent 401 on the write endpoint only, whose symptom
+  ("the counter is never confirmed") is indistinguishable from the endpoint not being deployed. All
+  values now percent-encoded.
+- **LOW — the blocking claim leaked its dialog on rotation.** `claimExecutor` holds the `Activity`
+  for up to connect+read timeout and the listener is skipped once it is destroyed, so nothing
+  dismissed "Obteniendo su consecutivo..." → `WindowLeaked`. The activity now holds the dialog in a
+  field and dismisses it in `onDestroy`. (The double-spend of a margin block was already guarded by
+  the re-check inside the executor task — see §16.)
+- **LOW — "blank URL = exactly the pre-R8 behaviour" was not true for the gate.** With
+  `SET_CONSECUTIVO_URL` empty (the default from a fresh clone or CI) a fresh install was shown
+  "No se pudo obtener su consecutivo del servidor. Conéctese a internet…", blaming a server that
+  was never configured. `InventarioSync.claimConfigurado()` now distinguishes "feature off" from
+  "claim failed" and goes straight to the manual-seed dialog, which is the pre-R8 path.
+
+### Closed with no code change
+
+**The server seed is read as "last used", so a técnico still at zero skips number 1.** The review
+flagged that `getConsecutivoFloor` folds `getSeqServidor` in as a last-used value, so with the live
+column seeded `<numero>-000001` the first remisión is `…000002`. That is §12 Q1, already closed:
+the stored number **is** the last number used. The consequence is real but it is an office
+communication item, not a bug — a series starting at 2 reads as a missing remisión unless the
+office is told. Same note as §16's closing item.

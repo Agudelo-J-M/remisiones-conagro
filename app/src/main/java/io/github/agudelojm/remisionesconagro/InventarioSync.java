@@ -648,17 +648,18 @@ public class InventarioSync {
     }
 
     /**
-     * Records what the server answered. Both writes only ever raise, so this is safe to run from
-     * the background thread: every {@code Methods} accessor for {@code app_config.json} is
-     * {@code synchronized}, so it cannot interleave with the UI thread's own writes.
+     * Records what the server answered. Runs on a background thread, so the counter is raised
+     * through {@link Methods#subirStoredConsecutivo}: comparing with {@code getStoredConsecutivo}
+     * and then calling {@code setStoredConsecutivo} would be two separate critical sections, and
+     * a {@code commitConsecutivo} landing on the UI thread in between would be overwritten by a
+     * value that was already stale when it was read — i.e. this would LOWER the counter. It only
+     * survived that today because {@code reconcileConsecutivo} re-reads the remisión files.
      */
     private static void adoptClaim(Context appContext, String numero, int seq) {
         Methods.setSeqConfirmado(appContext, numero, seq);
         // A value from the server — another install's claim, or a margin it granted — must raise
         // this phone's counter now, not wait for tomorrow's table download.
-        if (seq > Methods.getStoredConsecutivo(appContext, numero)) {
-            Methods.setStoredConsecutivo(appContext, numero, seq);
-        }
+        Methods.subirStoredConsecutivo(appContext, numero, seq);
         Log.d(TAG, "Consecutivo confirmado por el servidor: " + numero + " -> " + seq);
     }
 

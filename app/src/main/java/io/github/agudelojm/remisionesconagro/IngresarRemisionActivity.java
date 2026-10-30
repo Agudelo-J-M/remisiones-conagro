@@ -52,6 +52,11 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     private String tecnicoNumero = "";
     private String consecutivo = "";
     private String currentObservaciones = "Sin observaciones";
+    // The gate's blocking claim can outlive this activity: claimConsecutivoConMargen waits out
+    // the connect+read timeouts on its own executor and skips its listener once the activity is
+    // gone, so on a rotation nothing would dismiss this dialog -> WindowLeaked, plus a frozen
+    // "Obteniendo su consecutivo..." over the recreated screen. onDestroy closes it.
+    private android.app.AlertDialog esperandoConsecutivo;
 
     // Client search: técnico searches by persona_doc / persona_nombre / finca_nombre, but the app
     // resolves to the unique finca_id. All clients are preloaded once to filter in-memory.
@@ -138,26 +143,9 @@ public class IngresarRemisionActivity extends AppCompatActivity {
                 if (seq >= 0) {
                     arrancarPantalla();
                 } else {
-                    // The manual seed screen is the fallback, NOT a dead end. Its menu button is
-                    // gone (R8 §7), but the class is deliberately kept and this is the one place
-                    // that still reaches it — because the claim can fail for reasons the técnico
-                    // cannot wait out: a build with no SET_CONSECUTIVO_URL, a rotated key (401),
-                    // or a numero/cédula drift against the server (403). Offering only "Salir"
-                    // would leave a fresh install unable to ever write a remisión.
-                    new android.app.AlertDialog.Builder(this)
-                            .setTitle("Consecutivo no configurado")
-                            .setMessage("No se pudo obtener su consecutivo del servidor. "
-                                    + "Conéctese a internet y vuelva a intentarlo, o configúrelo "
-                                    + "manualmente con el número de su última remisión enviada.")
-                            .setCancelable(false)
-                            .setPositiveButton("Configurar manualmente", (d, w) -> {
-                                Intent intent = new Intent(this, CambiarConsecutivoActivity.class);
-                                intent.putExtra("userData", userData);
-                                startActivity(intent);
-                                finish();
-                            })
-                            .setNegativeButton("Salir", (d, w) -> finish())
-                            .show();
+                    pedirConsecutivoManual("No se pudo obtener su consecutivo del servidor. "
+                            + "Conéctese a internet y vuelva a intentarlo, o configúrelo "
+                            + "manualmente con el número de su última remisión enviada.");
                 }
             });
             return;
@@ -166,6 +154,43 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         arrancarPantalla();
     }
 
+    /**
+     * The manual seed screen is the fallback, NOT a dead end. Its menu button is gone (R8 §7),
+     * but the class is deliberately kept and this is the one place that still reaches it —
+     * because the gate can fail to produce a number for reasons the técnico cannot wait out: a
+     * build with no SET_CONSECUTIVO_URL (what a fresh clone or CI produces), no network, a
+     * rotated key (401), or a numero/cédula drift against the server (403). Offering only
+     * "Salir" would leave a fresh install unable to ever write a remisión.
+     */
+    private void pedirConsecutivoManual(String mensaje) {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Consecutivo no configurado")
+                .setMessage(mensaje)
+                .setCancelable(false)
+                .setPositiveButton("Configurar manualmente", (d, w) -> {
+                    Intent intent = new Intent(this, CambiarConsecutivoActivity.class);
+                    intent.putExtra("userData", userData);
+                    startActivity(intent);
+                    finish();
+                })
+                .setNegativeButton("Salir", (d, w) -> finish())
+                .show();
+    }
+
+    /** Closes the "Obteniendo su consecutivo..." dialog once, from whichever path gets there. */
+    private void cerrarEsperaConsecutivo() {
+        if (esperandoConsecutivo == null) return;
+        if (esperandoConsecutivo.isShowing()) esperandoConsecutivo.dismiss();
+        esperandoConsecutivo = null;
+    }
+
+    @Override
+    protected void onDestroy() {
+        // The claim listener is skipped when the activity is gone, so this is the only thing
+        // that dismisses the wait dialog on a rotation or a back-out mid-claim.
+        cerrarEsperaConsecutivo();
+        super.onDestroy();
+    }
     /** Everything after the consecutivo gate, so the gate can run asynchronously. */
     private void arrancarPantalla() {
         initViews();
