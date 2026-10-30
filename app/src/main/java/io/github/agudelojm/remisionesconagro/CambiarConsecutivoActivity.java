@@ -102,9 +102,9 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
     }
 
     private void refreshDisplay() {
-        boolean yaConfigurado = Methods.isConsecutivoInicializado(this, tecnicoNumero);
+        boolean yaConfigurado = Methods.isConsecutivoInicializado(this, userData);
         if (yaConfigurado) {
-            tvwDisplayActual.setText(Methods.peekProximoConsecutivo(this, tecnicoNumero));
+            tvwDisplayActual.setText(Methods.visibleDeConsecutivo(Methods.peekProximoConsecutivo(this, userData)));
         } else {
             tvwDisplayActual.setText("No configurado");
         }
@@ -161,18 +161,26 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
                 Methods.showAlert(this, "Los números no coinciden. Vuelva a intentarlo.").show();
                 return;
             }
-            if (!s1.matches("\\d+") || s1.length() < 7) {
-                Methods.showAlert(this, "Número inválido. Escriba el consecutivo completo (ej. 03000044).").show();
+            // The screen now displays the office's format ("3-000044"), so the técnico will copy
+            // that shape back in. Both are accepted: the hyphen is dropped and the prefix is
+            // compared numerically, so "3-000044", "03000044" and "3000044" all mean the same.
+            String norm = s1.replace("-", "").trim();
+            if (!norm.matches("\\d+") || norm.length() < 7) {
+                Methods.showAlert(this, "Número inválido. Escriba el consecutivo completo (ej. 3-000044).").show();
                 return;
             }
 
             // Split into prefix + 6-digit sequence and check the prefix belongs to this técnico
-            String suffix = s1.substring(s1.length() - 6);
-            String prefix = s1.substring(0, s1.length() - 6);
-            String fullZero = Methods.formatConsecutivo(tecnicoNumero, 0);
-            String expectedPrefix = fullZero.substring(0, fullZero.length() - 6);
-            if (!prefix.equals(expectedPrefix)) {
-                Methods.showAlert(this, "El número no corresponde a su usuario (prefijo " + expectedPrefix + ").").show();
+            String suffix = norm.substring(norm.length() - 6);
+            String prefix = norm.substring(0, norm.length() - 6);
+            try {
+                if (Integer.parseInt(prefix) != Integer.parseInt(tecnicoNumero.trim())) {
+                    Methods.showAlert(this, "El número no corresponde a su usuario (debe empezar por "
+                            + tecnicoNumero.trim() + ").").show();
+                    return;
+                }
+            } catch (Exception e) {
+                Methods.showAlert(this, "Número inválido.").show();
                 return;
             }
             try {
@@ -184,16 +192,27 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
         }
 
         // Guard: going below the known floor risks duplicates -> require explicit confirmation
-        int floor = Math.max(Methods.getStoredConsecutivo(this, tecnicoNumero),
-                Methods.reconcileConsecutivo(this, tecnicoNumero));
+        // The shared §4 floor, so the warning accounts for the server's value too — a hand re-seed
+        // below what the office already holds is exactly the case that creates duplicates.
+        int floor = Methods.getConsecutivoFloor(this, userData);
         final int seedSeq = lastSeq;
         if (lastSeq < floor) {
+            // REFUSED, not warned. This used to offer "Sí, continuar" — which could not be
+            // honoured: the floor is max(local, archivos, servidor) and nothing in R8 may lower a
+            // counter, so the very next peek raised the counter straight back and the técnico was
+            // told their number had been applied when it had not. Worse, if the server held the
+            // higher value the phone would then re-issue that whole range and get yanked forward
+            // by a 409 mid-remisión. A choice the app cannot deliver must not be offered.
             new android.app.AlertDialog.Builder(this)
-                    .setTitle("Advertencia")
-                    .setMessage("El número ingresado es menor al último registrado (" + floor + "). "
-                            + "Esto puede crear remisiones duplicadas que la oficina no podrá diferenciar. ¿Desea continuar?")
-                    .setPositiveButton("Sí, continuar", (d, w) -> proceedToReason(seedSeq, nuncaEnviado))
-                    .setNegativeButton("No", null)
+                    .setTitle("Número no permitido")
+                    .setMessage("Esta aplicación ya tiene registrado el consecutivo "
+                            + Methods.formatConsecutivoVisible(tecnicoNumero, floor)
+                            + ", que es mayor al que usted ingresó. No es posible reiniciar la "
+                            + "numeración por debajo de un número ya usado, porque crearía "
+                            + "remisiones duplicadas que la oficina no podría diferenciar.\n\n"
+                            + "Si la oficina necesita un número menor, debe solicitarlo a la "
+                            + "oficina para que lo corrijan en el servidor.")
+                    .setPositiveButton("Entendido", null)
                     .show();
         } else {
             proceedToReason(seedSeq, nuncaEnviado);
@@ -247,8 +266,11 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
     private void sendEmailToOffice() {
         String nombre = userData.getOrDefault("nombre", "");
         String cedula = userData.getOrDefault("cedula", "");
-        String ultima = (pendingSeedSeq <= 0) ? "Ninguna" : Methods.formatConsecutivo(tecnicoNumero, pendingSeedSeq);
-        String proximo = Methods.formatConsecutivo(tecnicoNumero, pendingSeedSeq + 1);
+        // The office's format, like every other human-facing consecutivo. This mail exists purely
+        // to tell them which number to expect, so it must not speak the internal id.
+        String ultima = (pendingSeedSeq <= 0) ? "Ninguna"
+                : Methods.formatConsecutivoVisible(tecnicoNumero, pendingSeedSeq);
+        String proximo = Methods.formatConsecutivoVisible(tecnicoNumero, pendingSeedSeq + 1);
 
         String body = "Cambio de consecutivo solicitado.\n\n"
                 + "Técnico: " + nombre + "\n"
@@ -280,11 +302,37 @@ public class CambiarConsecutivoActivity extends AppCompatActivity {
 
     private void applyChange() {
         Methods.setStoredConsecutivo(this, tecnicoNumero, pendingSeedSeq);
+
+        // Claim the hand-typed seed, so a re-seed is audited server-side (anterior -> nuevo, with
+        // this device's id) instead of being invisible to the office. The email above stays the
+        // human record; this is the machine one. validateEntry refuses anything below the floor,
+        // so the seed is always >= it and this always has something new to tell the server —
+        // unless the seed equals the confirmed value, where there is nothing to say.
+        InventarioSync.pushConsecutivoIfPending(this, tecnicoNumero,
+                userData.getOrDefault("cedula", ""));
+
         refreshDisplay();
+
+        // The floor can legitimately override a below-floor re-seed: R8's rule is that no
+        // operation ever lowers a counter, and the server's value is one of the floor's inputs.
+        // So report what will ACTUALLY be used. Announcing the typed number while storage already
+        // holds something higher is how this dialog used to lie to the técnico.
+        String pedido = Methods.formatConsecutivoVisible(tecnicoNumero, pendingSeedSeq + 1);
+        String efectivoInterno = Methods.peekProximoConsecutivo(this, userData);
+        String esperadoInterno = Methods.formatConsecutivo(tecnicoNumero, pendingSeedSeq + 1);
+
+        String mensaje;
+        if (efectivoInterno == null || efectivoInterno.equals(esperadoInterno)) {
+            mensaje = "Consecutivo actualizado. El próximo será " + pedido + ".";
+        } else {
+            mensaje = "Consecutivo guardado, pero la oficina ya tiene registrado un número mayor, "
+                    + "así que el próximo será " + Methods.visibleDeConsecutivo(efectivoInterno)
+                    + " y no " + pedido + ". Nunca se reutiliza un número ya usado.";
+        }
+
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Éxito")
-                .setMessage("Consecutivo actualizado. El próximo será "
-                        + Methods.formatConsecutivo(tecnicoNumero, pendingSeedSeq + 1) + ".")
+                .setMessage(mensaje)
                 .setPositiveButton("OK", (d, w) -> finish())
                 .setCancelable(false)
                 .show();

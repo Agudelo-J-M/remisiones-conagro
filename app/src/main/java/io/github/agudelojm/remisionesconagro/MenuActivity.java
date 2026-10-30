@@ -53,6 +53,12 @@ public class MenuActivity extends AppCompatActivity {
         // a sub-screen uses onResume), so this fires once per login as required.
         InventarioSync.runDailySyncIfNeeded(this, userData.get("numero"));
 
+        // R8 — push any consecutivo the server has not acknowledged. Silent and fire-and-forget;
+        // no daily guard, because an unconfirmed counter must retry at every login until it lands.
+        // It has to live here rather than in MainActivity: the claim needs both número and cédula,
+        // and MainActivity runs before login with neither.
+        InventarioSync.pushConsecutivoIfPending(this, userData.get("numero"), userData.get("cedula"));
+
         // Set Welcome Message
         TextView tvwBienvenida = findViewById(R.id.tvw_bienvenida);
         String nombre = userData.getOrDefault("nombre", "");

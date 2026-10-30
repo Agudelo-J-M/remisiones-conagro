@@ -13,6 +13,9 @@ val inventarioApiKey: String = localProperties.getProperty("INVENTARIO_API_KEY",
 // R5 — Datos App database endpoint (one CSV table per request). Blank URL = feature off.
 val datosAppUrl: String = localProperties.getProperty("DATOS_APP_URL", "")
 val datosAppKey: String = localProperties.getProperty("DATOS_APP_KEY", "")
+// R8 — consecutivo claim endpoint (write). Blank URL = the push is off and numbering stays
+// purely local, which is exactly the pre-R8 behaviour.
+val setConsecutivoUrl: String = localProperties.getProperty("SET_CONSECUTIVO_URL", "")
 
 android {
     namespace = "io.github.agudelojm.remisionesconagro"
@@ -35,6 +38,10 @@ android {
         // each CSV straight into a Tabla (no workbook is assembled any more — see R7).
         buildConfigField("String", "DATOS_APP_URL", "\"$datosAppUrl\"")
         buildConfigField("String", "DATOS_APP_KEY", "\"$datosAppKey\"")
+        // --- Consecutivo claim (R8 Phase 2) ---
+        // Base URL only; InventarioSync appends "?key=...&numero=..&cedula=..&seq=..". It reuses
+        // DATOS_APP_KEY, which is the same key the server checks on all three scripts.
+        buildConfigField("String", "SET_CONSECUTIVO_URL", "\"$setConsecutivoUrl\"")
     }
 
     buildTypes {

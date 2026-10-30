@@ -1,10 +1,13 @@
 # Feature Plan — Consecutivo servidor-autoritativo (R8)
 
-> **Status:** **Server side DEPLOYED and verified live 2026-10-26** — `set_consecutivo.php` is up,
-> and `get_datos_app.php` now merges the counter into the `CONSECUTIVO` column it serves. See
-> **§5.1** for exactly what was built, including three deviations from §5 as written. **No app
-> code exists yet:** Phase 1 and Phase 2 (§14) are both unstarted, and Phase 2 is no longer blocked
-> on anyone. **§12 Q1 is still open** and is the one answer Phase 1 needs.
+> **Status:** **COMPLETE as designed, 2026-10-26 — server, Phase 1 and Phase 2 all implemented;
+> nothing has run on a device yet.** The server is live and verified (§5.1, including three
+> deviations from §5 as written). 125 host tests green, debug APK builds. A code review of Phase 1
+> found two HIGH bugs (§15) and a second review over Phase 2 found eight more, one of them a
+> fresh-install brick (§16) — all fixed. Two deliberate
+> departures from this plan, both tightening it: **§7 case 1** (a server value alone no longer
+> skips the reinstall margin) and **`isConsecutivoInicializado` never gains its server clause**
+> (§6 table). §12 Q1 is closed: the stored number is the last one used.
 > **Author of design:** planning session, 2026-10-16. Supersedes the "no server to be the source
 > of truth" premise of `feature-consecutivo-remision.md` §2 — read that doc first; everything it
 > says about the ID format, the assign-at-commit lifecycle and the gated re-seed flow still holds
@@ -249,6 +252,29 @@ So: **split the internal id from the visible format.**
 | internal id (unchanged) | `03000045` | `Remision_*.json`, `firma_*_*.png`, `reconcileConsecutivo`, `commitConsecutivo`, the `consecutivo` intent extra |
 | visible (new) | `3-000045` | the PDF (`REMISIÓN:`), the email subject, the PDF attachment filename, the `CONSECUTIVO` column |
 
+**Scope widened by the owner, 2026-10-26, to every human-facing display**, which gives one rule
+worth stating plainly: **files and keys keep the internal id; everything a human reads goes through
+`Methods.visibleDeConsecutivo`.** Beyond the four above that means the Ingresar Remisión draft
+title, the Editar Remisión screen title, Cambiar Consecutivo's "próximo consecutivo actual", the
+Modificar Remisión list, and both the Reportes table and its consecutivo autocomplete. The
+reasoning: an edited old remisión already regenerates its PDF in the new shape, so leaving any
+display on the old one is the *inconsistent* choice, not the conservative one.
+
+Two consequences that had to be handled, both easy to miss:
+
+- **Reportes searches by consecutivo.** Its autocomplete now offers `3-000046` while the stored id
+  is `03000046`, so matching only the stored form would make picking a suggestion find nothing.
+  `ReportesActivity.coincideConsecutivo` matches either shape, substring semantics intact.
+- **Cambiar Consecutivo asks the técnico to *type* a consecutivo.** It displays the visible shape,
+  so that is what gets typed back; its validation rejected the hyphen (`matches("\\d+")`) and
+  compared the prefix as a string against `%02d`. It now strips the hyphen and compares the prefix
+  numerically, so `3-000044`, `03000044` and `3000044` are all accepted, and the on-screen example
+  in `activity_cambiar_consecutivo.xml` was updated to `3-000044`.
+
+`visibleDeConsecutivo` ended up taking **just the id**, not the session map: the internal id already
+carries the prefix as `%02d`, so no `userData` is needed — which is what lets Reportes (which has no
+session map at all) format one.
+
 - New `Methods.formatConsecutivoVisible(tecnicoNumero, seq)` → `numero.trim() + "-" + %06d`, with
   the **unpadded** prefix (the server's seed is `3-000001`, not `03-000001`).
 - `formatConsecutivo` stays exactly as it is. Nothing that touches a filename changes.
@@ -272,7 +298,7 @@ design, which is the whole point of the split.
 | `boolean hayConsecutivoPendiente(ctx, numero)` | `getStoredConsecutivo > getSeqConfirmado`. Drives the push. |
 | `peekProximoConsecutivo` | Takes the floor from `getConsecutivoFloor` instead of the local-only max. Needs `userData` (or the server seq) passed in — signature change, 3 call sites. |
 | `commitConsecutivo` | Unchanged as the local authority; the push is fired *after* it by the caller, never inside it. |
-| `isConsecutivoInicializado` | Also true when the server carries a value. This is what retires the manual flow as the normal path. |
+| `isConsecutivoInicializado` | ~~Also true when the server carries a value.~~ **NOT BUILT, and must not be** — see the AS BUILT note in §7. It stays local-evidence-only; Phase 2 retired the manual flow through the gate's blocking claim instead. Adding the server clause would let a wiped phone skip that claim and take `server + 1`, re-minting whatever it consumed offline. |
 
 ### `Methods.validateCredentials`
 
@@ -361,6 +387,29 @@ At `IngresarRemisionActivity` entry (the authoritative gate, ~line 120):
    "Conéctese a internet para obtener su consecutivo." Per the above this is close to
    unreachable; the office's recourse is to type a value into the `CONSECUTIVO` column, which the
    next sync picks up as a floor (§4).
+
+**AS BUILT (2026-10-26) — case 1 was deliberately tightened, and this supersedes the list above.**
+The gate asks only **"does this device have a *local* counter?"** (`isConsecutivoInicializado`,
+which is local evidence only — the stored key or surviving `Remision_*.json` files):
+
+- **Local counter exists** -> proceed untouched. Unchanged.
+- **No local counter** -> the blocking claim **with the §8 margin**, whether or not the server has
+  a value, behind "Obteniendo su consecutivo...". On success, proceed silently.
+- **The claim fails** -> a dialog offering **"Configurar manualmente"** (which launches
+  `CambiarConsecutivoActivity` directly) or "Salir". **This is the only remaining entry point to
+  that screen** now that its menu button is `gone`, and it is why the class is kept rather than
+  deleted. A second review caught the first cut of this offering only "Salir": combined with the
+  hidden button that **bricked a fresh install** — no remisión could ever be written — and not
+  only without a network. A blank `SET_CONSECUTIVO_URL` (the default from a fresh clone, so any
+  CI or new-machine build), a rotated key (401) or a `numero`/`cédula` drift (403) all land here,
+  and none of them is something the técnico can wait out.
+
+Why: case 1 above would let a wiped phone take the server's value `+ 1`, and having no local
+history is *precisely* the state in which the numbers consumed offline before the wipe are
+unknowable — which is the entire premise of §8. Taking `+ 1` there re-mints them. A gap on
+reinstall is recoverable and legible; a duplicate is neither. The técnico's experience is what
+cases 1–2 promised either way (a brief wait, no prompt, no manual screen), so the only cost is up
+to 99 burned numbers on a reinstall, which §8 already accepted.
 
 ## 8. The reinstall margin — turning a possible duplicate into a visible gap
 
@@ -451,11 +500,12 @@ required). None of them changes the app's design.
 
 ## 12. Open questions — the one that still blocks coding
 
-1. **What does `3-000001` mean: the last used number, or the next one to use?** Every real row
-   carries the same value, so it is plainly a seed and not real data — but the whole series is off
-   by one if this is guessed. This plan assumes **last used** (consistent with
-   `app_config.json`'s `consecutivos`, where next = value + 1). If the client means "next", the
-   server must subtract one when seeding, or `getSeqServidor` must, once, forever.
+1. **CLOSED 2026-10-26 (owner): the stored number is the LAST NUMBER USED**, which is what this
+   plan already assumed and what `app_config.json`'s `consecutivos` means, so next = value + 1 and
+   no adjustment is needed anywhere. For the record, its blast radius was narrower than this
+   section implied: the floor is `max(storedLocal, reconcile, server)`, so on any phone already in
+   use the local counter dominates the seed — the answer only decided whether a **fresh** device's
+   first remisión was `3-000001` or `3-000002`.
 2. **CLOSED 2026-10-26 — the endpoint is deployed and verified.** The client accepted the §5 spec
    on 2026-10-22, then handed the owner cPanel access instead of finishing; the owner deployed it
    himself. **§5.1 is the record of what is actually running**, including the three deviations.
@@ -539,18 +589,154 @@ a wipe):
 
 **Order of work**, so nothing waits on the client unnecessarily:
 
-1. **Phase 1 — read side, ships without the endpoint.** `getSeqServidor` + the floor + the
-   `consecutivoServidor` plumbing + **the §6.0 visible format** + host tests. Already useful on
-   its own: the office can set a floor by typing in the column, a reinstalled phone picks it up,
-   and the PDF finally carries the format the office asked for. Does **not** retire the manual
-   flow on its own (§2: a read-only column cannot).
+1. ~~**Phase 1 — read side, ships without the endpoint.**~~ **DONE 2026-10-26.** Compiling, 118
+   host tests green (was 87), **not yet run on a device.** What landed:
+   - `Methods.formatConsecutivoVisible`, `seqDe`, `visibleDeConsecutivo` — §6.0. `formatConsecutivo`
+     and every filename that feeds `reconcileConsecutivo` are byte-for-byte unchanged.
+   - The visible format now feeds the PDF header, both email subjects, and the **PDF filename**
+     (`Methods.java`, `Remision_3-000045.pdf`) — which is the attachment name the office receives.
+     Safe because nothing looks that file up by name and `cleanOldRemisiones` sweeps it by prefix;
+     the `.json` keeps the internal id, which is what the self-heal parses.
+   - **Plus every other human-facing display**, per the owner's 2026-10-26 widening (see §6.0):
+     the Ingresar draft title, the Editar screen title, Cambiar Consecutivo's display *and* its
+     input validation + on-screen example, the Modificar list, and the Reportes table and
+     autocomplete with `coincideConsecutivo` so searching still works across both shapes.
+   - `Methods.getSeqServidor(userData)` — the prefix-checked parse, `-1` for blank/absent/foreign.
+   - `Methods.getConsecutivoFloor(context, userData)` — the §4 `max(...)`, adopted via
+     `setStoredConsecutivo`. `peekProximoConsecutivo` now takes `userData` and goes through it;
+     there is **no overload left that can bypass the floor**. `CambiarConsecutivoActivity`'s
+     below-floor warning uses the same helper.
+   - `validateCredentials` exports `consecutivoServidor` (superset column, `Log.w` when absent,
+     blank is a supported state) — same treatment `CORREO OFICINA` got in R6.
+   - New tests: `ConsecutivoVisibleTest` (23) and `ValidateCredentialsConsecutivoTest` (8, through
+     the real `adoptDatosApp` → `validateCredentials` path).
+
+   **`isConsecutivoInicializado` was deliberately NOT given its server clause.** §6's table has a
+   server value counting as "initialized", and that is correct *with* Phase 2 — but Phase 2 is what
+   makes the column trustworthy. Today every real row still holds the office's seed
+   `<numero>-000001`, so trusting it would let a reinstalled phone skip the manual gate and mint
+   from 2, duplicating that técnico's entire history. The floor is safe without Phase 2 because it
+   only ever raises; this is not. The one-line change is written out in the method's javadoc and
+   must land **with** the push and the §8 margin, never before.
 2. ~~**Client builds §5.**~~ **DONE 2026-10-26** — deployed and verified by the owner; read §5.1
    before writing Phase 2, because the wire contract there is the tested one.
-3. **Phase 2 — write side.** The push, the outbox, the margin, the new gate, the demotion of
-   `CambiarConsecutivoActivity`. This is the phase that actually retires the manual flow. **No
-   longer blocked.** Remember that a **409 is an authoritative answer, not an error** — adopt the
-   `seq` it returns exactly as on a 200.
+3. ~~**Phase 2 — write side.**~~ **DONE 2026-10-26.** Compiling, debug APK builds, 125 host tests
+   green, **not yet on a device.** What landed:
+   - **Outbox:** `Methods.get/setSeqConfirmado` + `hayConsecutivoPendiente`, in `app_config.json`
+     under `consecutivosConfirmados`. One int, as §3 promised.
+   - **Margin:** `Methods.MARGEN_REINSTALACION = 100` + `seqConMargen(floor)`, clamped to 6 digits.
+     Covered by `ConsecutivoMargenTest` (7), whose real assertion is the property that the result
+     is **always strictly greater than the floor** — if it could ever equal it, a reinstall would
+     re-mint a number the office already holds.
+   - **Push:** `InventarioSync.pushConsecutivoIfPending(context, numero, cedula)` — background
+     executor, **no daily guard**, `catch (Throwable)`, silent on every failure. Call sites:
+     `MenuActivity.onCreate` (login), `IngresarRemisionActivity` right after `commitConsecutivo`,
+     and `CambiarConsecutivoActivity` after a manual seed so a re-seed is audited too.
+   - **Blocking claim:** `InventarioSync.claimConsecutivoConMargen(activity, userData, listener)`,
+     used only by the gate. It is the one path allowed to *establish* a local counter, because the
+     number it stores came from the server.
+   - **Its own HTTP**, not `httpGet`: that one maps anything unexpected to `NETWORK_ERROR` and
+     discards the body, but **409 is an authoritative answer whose body carries the value to
+     adopt** — and a 409 body arrives on the *error* stream, not the input stream. 200 and 409 are
+     treated identically. 400/401/403 are logged and retried next open, never shown.
+   - **`device=`** an 8-hex per-install id (`Methods.getInstallId`, in `app_config.json`), and
+     **`usados=`** the individual numbers since the last confirmation, capped at 40 to stay under
+     the server's 255-char column.
+   - **Config:** `SET_CONSECUTIVO_URL` in `local.properties` → `BuildConfig`, same pattern as
+     `DATOS_APP_URL`; blank turns the push off and numbering stays purely local (pre-R8 behaviour).
+     The key is the existing `DATOS_APP_KEY`.
+   - **UI:** `android:visibility="gone"` on `btn_CambiarConsecutivo`. Class, layout, string,
+     manifest entry and the `MenuActivity` listener all stay, so reinstating it is one attribute.
 
 Phase 1 is maybe 60 lines, plus §6.0 (another ~15 and five call sites), plus a test class. Phase 2
 is the work, but it has no POI, no file format and no UI of consequence — it is one GET, one
 integer of state, and five call sites.
+
+---
+
+## 15. Code review, 2026-10-26 — what it caught
+
+A review of Phase 1 (`/code-review high`) found two HIGH bugs **in the floor**, both fixed before
+Phase 2 was built on top. Recorded because they were the same mistake twice: the floor is a *read*,
+and making it write is what broke the guards around it.
+
+1. **`getConsecutivoFloor` silently satisfied the fresh-install gate.** It persisted through
+   `setStoredConsecutivo`, which *creates* the `consecutivos.<numero>` key, and
+   `isConsecutivoInicializado` tests key presence. So on a fresh install, opening Cambiar
+   Consecutivo and cancelling at any later dialog left the key behind; the gate then passed and the
+   phone minted from the office's seed + 1 — the exact duplicate scenario the Phase 1 carve-out was
+   written to prevent. **Fix:** the private `Methods.tieneContadorLocal` now gates the write, so the
+   floor **raises an existing counter and never creates one**. That predicate is deliberately
+   separate from `isConsecutivoInicializado`, so a later widening of that method cannot make the
+   floor self-authorising again.
+2. **The floor reverted a deliberate below-floor re-seed, and the UI lied about it.** `applyChange`
+   stored the typed number, then `refreshDisplay()` recomputed the floor and raised it straight
+   back, while the "Éxito" dialog announced the number that had not stuck. The floor winning is
+   correct per §11 (nothing ever lowers a counter); the lie was not. **Fix:** the dialog now reports
+   the *effective* next consecutivo and says explicitly when the office already holds a higher one.
+
+Two more, also fixed: Cambiar Consecutivo's **office email and success dialog still printed the
+internal `03000044`** on the one screen otherwise fully converted to §6.0's format (plus a bare
+integer in the below-floor warning); and `DatosAppStore.save`'s javadoc **claimed a group atomicity
+that four separate renames cannot provide** — corrected to state the real guarantee (writing all
+four tmp files first prevents a *mismatched* store; a failed rename leaves a file missing, which
+`exists()` reports as "no store" and the bootstrap download then rebuilds).
+
+One finding was **closed without a code change**: with §12 Q1 answered as "last used", the seed
+`<numero>-000001` means number 1 is already spent, so the 32 seeded técnicos never produce a
+`-000001` remisión — their first is `-000002`. That follows from the owner's own answer. **Worth
+telling the office**, so a series starting at 2 is not read as a missing remisión.
+
+## 16. Second code review, 2026-10-26 — Phase 2 included
+
+`/code-review high` again, over Phase 1 + the §15 fixes + Phase 2. Eight findings, all fixed. It
+confirmed the two riskiest Phase 1 claims hold: nothing reconstructs the PDF path by name, and
+`reconcileConsecutivo`'s `.json` filter cannot be confused by `Remision_13-000045.pdf`.
+
+**HIGH — the fresh-install gate was a dead end.** Covered in §7 above: the gate offered only
+"Salir" while `btn_CambiarConsecutivo` was `gone`, so any non-network claim failure left a fresh
+install unable to write a remisión, forever. The planning note "a first install always has network"
+covered one of four triggers. Fixed by making the manual screen the gate's explicit fallback.
+
+**MEDIUM — the blocking claim was queued behind the daily downloads.** It shared the single-thread
+`executor` with the 4-request database sync and the bodega sync (15 s connect + 20 s read each), so
+on a slow link the técnico could sit behind a **non-cancelable** dialog for minutes before the claim
+even started. Fixed with a dedicated `claimExecutor`; the silent push still shares the old one,
+where queuing is harmless.
+
+**MEDIUM — `usados=` reported numbers the phone never issued.** It enumerated the integer gap
+`confirmado+1..stored`, but the floor can raise `stored` with no remisión sent — an office override
+typed into the server column (a recourse §5.1 deliberately preserves) would have filled the audit
+log with up to 40 invented numbers, in the one record that is supposed to prove what this device
+did. Fixed: `Methods.getConsecutivosUsados` reads the actual `Remision_*.json` sequences. Bounded by
+the 14-day sweep, which is the right trade — a short accurate list beats a long invented one.
+
+**LOW — no guard against a second claim.** Activity recreation ("don't keep activities", low
+memory) re-fires the gate; if the first claim had already adopted, the second would see the new
+floor and ask for the **next** margin block — a 200-number gap from one recreation. Fixed by
+re-checking `isConsecutivoInicializado` inside the executor task, which also reports the right
+answer to the second activity instead of just suppressing it.
+
+**LOW — `getErrorStream()` can be null** on a 409 with no body; `readAll(null)` NPEs, and
+`catch (IOException)` does not catch it, so the "unusable body" diagnostic never fired and the NPE
+escaped to the caller. Guarded.
+
+**LOW — the 6-digit clamp broke the margin's own invariant.** `seqConMargen(999999)` returned
+999999 — *equal* to the floor, i.e. a re-mint — and `ConsecutivoMargenTest` asserted that equality,
+enshrining the hole it was written to prevent. Now it falls back to `floor + 1` while that fits and
+returns **-1 once the series is spent**, which the blocking claim treats as a failure. Unreachable
+for decades, but it was the one case where the test actively protected a duplicate.
+
+**LOW — a below-floor re-seed left the confirmed mark high.** Nothing lowered
+`consecutivosConfirmados`, so `hayConsecutivoPendiente` stayed false and remisiones 51–100 after a
+re-seed to 50 would be sent with **no push at all** while the server kept 100. Fixed with
+`Methods.bajarSeqConfirmado`, called from `applyChange`. Only reachable with the button re-enabled —
+which is exactly why the guard lives in `Methods` and not in the screen.
+
+**LOW — `formatConsecutivoVisible` used `Locale.getDefault()`.** Its output is now a PDF filename
+and an email subject, so a locale with non-ASCII decimal digits would produce an attachment name and
+an outbound identifier nobody could read back, `seqDe` included. Now `Locale.US`.
+**`formatConsecutivo` deliberately keeps `getDefault()`**: it names the stored `Remision_*.json` and
+`firma_*.png` files that `reconcileConsecutivo` parses, so changing its locale would stop it
+recognising files an affected device had already written — dropping the floor, which is the
+duplicate case. The pre-existing exposure there is left alone on purpose.

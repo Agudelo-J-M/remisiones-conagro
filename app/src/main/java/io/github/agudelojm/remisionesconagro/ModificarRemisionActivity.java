@@ -69,7 +69,7 @@ public class ModificarRemisionActivity extends AppCompatActivity {
 
             String consecutivo = rem.get("consecutivo");
 
-            row.addView(crearTextViewCelda(consecutivo, 1.2f)); 
+            row.addView(crearTextViewCelda(Methods.visibleDeConsecutivo(consecutivo), 1.2f)); 
             row.addView(crearTextViewCelda(rem.get("finca_nombre"), 1.6f));
             
             String fechaStr = rem.get("fecha");

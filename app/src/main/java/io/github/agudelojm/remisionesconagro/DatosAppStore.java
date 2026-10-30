@@ -119,10 +119,19 @@ final class DatosAppStore {
     /**
      * Writes the whole store.
      *
-     * <p>Every table goes to a ".tmp" sibling first and only then is renamed into place, so an
-     * interrupted or failed write can never leave the store half-updated — a técnico whose
-     * Tecnicos table was replaced while Productos was not would be locked into a mismatched
-     * database with no way back.
+     * <p>All four tables are written to ".tmp" siblings first, and only once every one of them
+     * has been written successfully is any of them renamed into place. So the common failure —
+     * running out of space, or a table that will not serialize — happens before the live store is
+     * touched at all.
+     *
+     * <p><b>What this does NOT guarantee:</b> the renames themselves are atomic one table at a
+     * time, not as a group, which no plain filesystem can offer. If a rename fails midway, the
+     * earlier tables already hold new data and the failed one is missing entirely. That is
+     * deliberately left as-is because it is recoverable and loud rather than silent:
+     * {@link #exists} then reports the store absent, {@link Methods#loadDatosApp} falls through to
+     * the bootstrap download, and the bootstrap ignores the daily guard — so the next launch with
+     * a network rebuilds the whole store. A *mismatched* store (Tecnicos replaced, Productos not)
+     * is the outcome actually worth preventing, and the all-tmp-first ordering is what prevents it.
      *
      * @return true only if all four tables are now in place.
      */

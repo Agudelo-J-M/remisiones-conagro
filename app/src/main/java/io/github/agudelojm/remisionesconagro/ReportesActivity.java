@@ -84,7 +84,7 @@ public class ReportesActivity extends AppCompatActivity {
         if (type == 1) { // Remision — a short list of consecutivos, nothing to optimize
             List<String> consecutivos = new ArrayList<>();
             for (Map<String, String> r : Methods.getListaRemisiones(this)) {
-                consecutivos.add(r.get("consecutivo"));
+                consecutivos.add(Methods.visibleDeConsecutivo(r.get("consecutivo")));
             }
             edtInput.setAdapter(new ArrayAdapter<>(this,
                     android.R.layout.simple_dropdown_item_1line, consecutivos));
@@ -142,11 +142,11 @@ public class ReportesActivity extends AppCompatActivity {
 
                     boolean matches = false;
                     if (type == 0 && prodId.contains(finalQuery)) matches = true;
-                    else if (type == 1 && consecutivo.toLowerCase().contains(finalQuery)) matches = true;
+                    else if (type == 1 && coincideConsecutivo(consecutivo, finalQuery)) matches = true;
                     else if (type == 2 && fincaId.contains(finalQuery)) matches = true;
 
                     if (matches) {
-                        agregarFila(consecutivo, fincaNom, prodNom, cant, fecha);
+                        agregarFila(Methods.visibleDeConsecutivo(consecutivo), fincaNom, prodNom, cant, fecha);
                         found = true;
                     }
                 }
@@ -185,10 +185,22 @@ public class ReportesActivity extends AppCompatActivity {
                         cant = String.valueOf((int) v);
                     } catch (Exception e) {}
                     
-                    agregarFila(consecutivo, fincaNom, item.getString("nombre"), cant, fecha);
+                    agregarFila(Methods.visibleDeConsecutivo(consecutivo), fincaNom, item.getString("nombre"), cant, fecha);
                 }
             } catch (Exception e) { e.printStackTrace(); }
         }
+    }
+
+    /**
+     * Matches a stored consecutivo against what the técnico typed, in either format. The table and
+     * the autocomplete both show the office's shape ("3-000046") while the stored id is still
+     * "03000046", so searching only the stored form would make picking a suggestion find nothing.
+     * Substring matching is kept, so partial numbers still work as they always did.
+     */
+    private boolean coincideConsecutivo(String consecutivo, String query) {
+        if (consecutivo == null || query == null) return false;
+        if (consecutivo.toLowerCase().contains(query)) return true;
+        return Methods.visibleDeConsecutivo(consecutivo).toLowerCase().contains(query);
     }
 
     private void agregarFila(String rem, String finca, String prod, String cant, long fecha) {

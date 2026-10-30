@@ -123,7 +123,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
         btnFinalizar = findViewById(R.id.btn_Finalizar_Editar_Remision);
         tlyTabla = findViewById(R.id.tly_TablaDatos_Editar_Remision);
 
-        String titulo = "Editar Remisión - " + consecutivo;
+        String titulo = "Editar Remisión - " + Methods.visibleDeConsecutivo(consecutivo);
         tvwTitulo.setText(titulo);
 
         CodigoNombreAdapter productAdapter = new CodigoNombreAdapter(this, Methods.getListaProductos());
@@ -478,7 +478,7 @@ public class EditarRemisionActivity extends AppCompatActivity {
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("application/pdf");
         emailIntent.putExtra(Intent.EXTRA_EMAIL, Methods.buildEmailRecipients(clientEmail, oficinaEmail));
-        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión Editada " + consecutivo);
+        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión Editada " + Methods.visibleDeConsecutivo(consecutivo));
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto remisión actualizada.");
         emailIntent.putExtra(Intent.EXTRA_STREAM, androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", pdf));
         emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);

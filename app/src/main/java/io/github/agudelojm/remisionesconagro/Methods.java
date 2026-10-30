@@ -338,6 +338,11 @@ public class Methods {
             // required-column check below: a phone still holding a pre-"CORREO OFICINA"
             // database must keep logging in, it just gets "" and the manual reminder instead.
             int idxCorreoOficina = tecnicos.columnIndex("CORREO OFICINA");
+            // The server's consecutivo for this técnico, used as a floor (never as the authority)
+            // by getConsecutivoFloor. Superset column for the same reason as CORREO OFICINA: a
+            // server rollback or an older stored database must still log everyone in, falling
+            // back to purely local numbering (R8 §4).
+            int idxConsecutivo = tecnicos.columnIndex("CONSECUTIVO");
 
             if (idxCorreo == -1 || idxCedula == -1 || idxNombre == -1 || idxNumero == -1) {
                 throw new Exception("Error de formato: faltan columnas requeridas en hoja Tecnicos");
@@ -349,6 +354,14 @@ public class Methods {
                 // reminder reappearing, which looks exactly like the intended fallback.
                 Log.w(TAG, "Columna 'CORREO OFICINA' ausente en hoja Tecnicos; "
                         + "el correo de la oficina no se completará automáticamente.");
+            }
+
+            if (idxConsecutivo == -1) {
+                // Same reasoning: without the log, losing the column is invisible. The symptom
+                // would be the counter quietly going local-only, which looks identical to normal
+                // operation right up until a reinstall mints a duplicate.
+                Log.w(TAG, "Columna 'CONSECUTIVO' ausente en hoja Tecnicos; "
+                        + "el consecutivo del servidor no se usará como piso.");
             }
 
             // Scan the whole table instead of returning on the first hit. Two rows sharing BOTH
@@ -392,6 +405,9 @@ public class Methods {
                 data.put("cedula", tecnicos.value(match, idxCedula));
                 data.put("correoOficina", (idxCorreoOficina == -1) ? ""
                         : tecnicos.value(match, idxCorreoOficina).trim());
+                // Blank is a supported state ("never claimed"), exactly like CORREO OFICINA.
+                data.put("consecutivoServidor", (idxConsecutivo == -1) ? ""
+                        : tecnicos.value(match, idxConsecutivo).trim());
                 return data;
             }
         } catch (Exception e) {
@@ -935,6 +951,84 @@ public class Methods {
         return format2Digitos(tecnicoNumero) + String.format(Locale.getDefault(), "%06d", seq);
     }
 
+    /**
+     * The format a human sees: "3-000045" — unpadded número, hyphen, 6-digit sequence. This is
+     * the office's definitive consecutivo and the shape the server's CONSECUTIVO column holds.
+     * <p>
+     * Deliberately NOT the same string as {@link #formatConsecutivo}, which stays the storage
+     * key: that one names {@code Remision_*.json} and {@code firma_*_*.png}, and
+     * {@link #reconcileConsecutivo} rebuilds the local floor by parsing those filenames as
+     * {@code <2-digit prefix><exactly 6 digits>}. Reformatting the shared string would silently
+     * break the 14-day self-heal on every phone that already has saved remisiones (R8 §6.0).
+     */
+    public static String formatConsecutivoVisible(String tecnicoNumero, int seq) {
+        String numero = tecnicoNumero != null ? tecnicoNumero.trim() : "";
+        // Normalize the prefix the same way visibleDeConsecutivo does, which parses it as an int.
+        // Without this, a Tecnicos cell reading "03" would print "03-000045" here (the Cambiar
+        // Consecutivo dialogs and the office email) while the PDF, the email subject and Reportes
+        // printed "3-000045" — two shapes for one number, in the feature whose whole premise is
+        // that the office has a single format. Non-numeric números are left exactly as they are.
+        try {
+            numero = String.valueOf(Integer.parseInt(numero));
+        } catch (Exception ignore) {
+            // not an integer: keep the trimmed raw value, same as format2Digitos does
+        }
+        // Locale.US, not getDefault(): this string is a PDF filename, an email subject and the
+        // value the office types into the server column, so it has to be ASCII digits on every
+        // device. A locale with non-ASCII decimal digits would produce an attachment name and an
+        // outbound identifier nobody can read back — seqDe included.
+        //
+        // formatConsecutivo keeps getDefault() deliberately: its output names the stored
+        // Remision_*.json and firma_*.png files, and reconcileConsecutivo rebuilds the floor by
+        // parsing those names. Changing its locale would stop it recognising files an affected
+        // device had already written, dropping the floor — which is the duplicate case. The
+        // pre-existing exposure there is left alone on purpose.
+        return numero + "-" + String.format(Locale.US, "%06d", seq);
+    }
+
+    /**
+     * Reads the sequence back out of either shape — "03000045" and "3-000045" both give 45 — so
+     * an internal id and a visible consecutivo are interchangeable as input. The rule is "the
+     * last 6 digits", which is also how the server's column is parsed. -1 when unparseable.
+     */
+    public static int seqDe(String consecutivo) {
+        if (consecutivo == null) return -1;
+        consecutivo = consecutivo.trim();
+        if (consecutivo.length() < 6) return -1;
+        try {
+            return Integer.parseInt(consecutivo.substring(consecutivo.length() - 6));
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Converts a consecutivo to the visible format, taking the número from the id itself: the
+     * internal id is {@code <%02d prefix><%06d sequence>}, so the prefix is already in the string
+     * and no session is needed. That is what lets screens holding only a stored remisión — Reportes,
+     * Modificar — format one.
+     * <p>
+     * Falls back to the input unchanged whenever it cannot do better: a malformed value, a bare
+     * 6-digit id with no prefix, or a non-numeric prefix (which {@link #format2Digitos} produces
+     * when a técnico número is not an integer). A display path must never fail or print an empty
+     * consecutivo — the worst case is the old shape.
+     * <p>
+     * The rule across the app: **files and keys keep the internal id, everything a human reads
+     * goes through here** (R8 §6.0).
+     */
+    public static String visibleDeConsecutivo(String consecutivo) {
+        int seq = seqDe(consecutivo);
+        if (seq < 0) return consecutivo;
+        String prefijo = consecutivo.trim();
+        prefijo = prefijo.substring(0, prefijo.length() - 6).replace("-", "").trim();
+        if (prefijo.isEmpty()) return consecutivo;
+        try {
+            return formatConsecutivoVisible(String.valueOf(Integer.parseInt(prefijo)), seq);
+        } catch (Exception e) {
+            return consecutivo;
+        }
+    }
+
     /** Reads app_config.json into a JSONObject (empty object if missing/unreadable). */
     private static JSONObject readAppConfig(Context context) {
         try {
@@ -1057,27 +1151,218 @@ public class Methods {
     }
 
     /**
-     * True once a counter has been established for this técnico. Uses key presence (not value),
-     * so a técnico who seeds "never sent" (sequence 0) still counts as configured.
+     * The highest sequence the server has acknowledged for this técnico — the whole outbox, in
+     * one integer. That is what the idempotent {@code max} on the server buys us: there is no
+     * queue of pending numbers to keep, only "highest used" vs "highest confirmed" (R8 §3).
+     * <p>
+     * Lives in {@code app_config.json} and NOT in a {@code Remision_*} file, because
+     * {@link #cleanOldRemisiones} deletes those after 14 days and would eat the state.
      */
-    public static synchronized boolean isConsecutivoInicializado(Context context, String tecnicoNumero) {
-        if (tecnicoNumero == null || tecnicoNumero.trim().isEmpty()) return false;
+    public static synchronized int getSeqConfirmado(Context context, String tecnicoNumero) {
+        if (tecnicoNumero == null) return 0;
+        JSONObject conf = readAppConfig(context).optJSONObject("consecutivosConfirmados");
+        return conf == null ? 0 : conf.optInt(tecnicoNumero, 0);
+    }
+
+    /** Records what the server answered. Only ever raises, like everything else in R8. */
+    public static synchronized void setSeqConfirmado(Context context, String tecnicoNumero, int seq) {
+        if (tecnicoNumero == null) return;
+        JSONObject json = readAppConfig(context);
         try {
-            File file = new File(context.getFilesDir(), "app_config.json");
-            if (file.exists()) {
-                try (FileInputStream fis = new FileInputStream(file)) {
-                    byte[] data = new byte[(int) file.length()];
-                    fis.read(data);
-                    JSONObject json = new JSONObject(new String(data, "UTF-8"));
-                    JSONObject cons = json.optJSONObject("consecutivos");
-                    if (cons != null && cons.has(tecnicoNumero)) return true;
-                }
+            JSONObject conf = json.optJSONObject("consecutivosConfirmados");
+            if (conf == null) conf = new JSONObject();
+            if (seq > conf.optInt(tecnicoNumero, 0)) {
+                conf.put(tecnicoNumero, seq);
+                json.put("consecutivosConfirmados", conf);
+                writeAppConfig(context, json);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error checking consecutivo init", e);
+            Log.e(TAG, "Error saving confirmed consecutivo", e);
         }
-        // Self-heal: if referral files survive, treat as configured.
+    }
+
+    /**
+     * Raises the stored counter to {@code seq} if it is higher, comparing and writing inside ONE
+     * critical section. {@code getStoredConsecutivo} and {@code setStoredConsecutivo} are each
+     * synchronized separately, so a caller that reads, decides, then writes can be interleaved by
+     * the UI thread's own `commitConsecutivo` and end up *lowering* the counter with a value that
+     * was already stale when it was read. The background claim is exactly such a caller.
+     *
+     * @return the counter's value afterwards.
+     */
+    public static synchronized int subirStoredConsecutivo(Context context, String tecnicoNumero, int seq) {
+        int actual = getStoredConsecutivo(context, tecnicoNumero);
+        if (seq > actual) {
+            setStoredConsecutivo(context, tecnicoNumero, seq);
+            return seq;
+        }
+        return actual;
+    }
+
+    /** True when this técnico has consumed a number the server has not acknowledged yet. */
+    public static synchronized boolean hayConsecutivoPendiente(Context context, String tecnicoNumero) {
+        if (tecnicoNumero == null || tecnicoNumero.trim().isEmpty()) return false;
+        return getStoredConsecutivo(context, tecnicoNumero) > getSeqConfirmado(context, tecnicoNumero);
+    }
+
+    /**
+     * The reinstall margin (R8 §8). A device with no local history cannot know what it consumed
+     * offline before being wiped, so it does not ask for {@code server + 1} — it jumps to the
+     * next multiple of this, deliberately burning numbers to turn a possible duplicate into a
+     * visible gap. A jump to a round hundred is unmistakably a replaced phone; a jump of 7 would
+     * be indistinguishable from 7 lost remisiones, which is the thing the series exists to show.
+     * <p>
+     * Policy constant: the owner can set it to 20 (next multiple of 20) without touching logic.
+     * See the locked decision in the plan's §11 before lowering it.
+     */
+    public static final int MARGEN_REINSTALACION = 100;
+
+    /**
+     * {@code floor} -> the sequence a fresh claim should ask for, or <b>-1 when the 6-digit series
+     * is exhausted</b> and there is no number left to hand out.
+     * <p>
+     * The result is always strictly greater than the floor. That is the property the whole margin
+     * rests on: a value equal to the floor would re-mint a number the office already holds, which
+     * is the one unrecoverable outcome in this feature. So when the next margin block would
+     * overflow 6 digits this does NOT clamp to 999999 — it falls back to {@code floor + 1} while
+     * that still fits, and only then gives up. Unreachable for decades (the busiest técnico is in
+     * the low thousands), but a clamp here would have been a silent duplicate.
+     */
+    public static int seqConMargen(int floor) {
+        if (floor < 0) floor = 0;
+        if (floor >= 999999) {
+            Log.e(TAG, "Serie de consecutivos agotada: el piso ya es " + floor);
+            return -1;
+        }
+        int seq = (MARGEN_REINSTALACION <= 1)
+                ? floor + 1
+                : (floor / MARGEN_REINSTALACION + 1) * MARGEN_REINSTALACION;
+        if (seq > 999999) {
+            // No room for a whole margin block; take the smallest number that is still safe.
+            Log.w(TAG, "Sin espacio para el margen (" + seq + "); se usa el siguiente consecutivo.");
+            seq = floor + 1;
+        }
+        return seq;
+    }
+
+    /**
+     * A stable per-install id, sent as {@code device=} on a claim so the office can see two
+     * devices claiming for one técnico — the §9 phone-swap hazard, otherwise invisible to
+     * everyone. Eight hex characters: enough to tell installs apart, short enough for a URL,
+     * and not derived from anything identifying the phone or the person.
+     */
+    public static synchronized String getInstallId(Context context) {
+        JSONObject json = readAppConfig(context);
+        String id = json.optString("installId", "");
+        if (!id.isEmpty()) return id;
+        id = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        try {
+            json.put("installId", id);
+            writeAppConfig(context, json);
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving installId", e);
+        }
+        return id;
+    }
+
+    /**
+     * The sequence the server holds for this técnico, from the CONSECUTIVO column captured at
+     * login. -1 when there is nothing usable, which is a supported state, never an error:
+     * a blank cell ("never claimed"), an absent column (older database or a server rollback),
+     * or a malformed value.
+     * <p>
+     * The prefix is checked against this técnico's número before the value is accepted, so
+     * "3-000045" and "03000045" both work for número 3 while another técnico's row can never be
+     * inherited. A bare "000045" with no prefix is rejected for the same reason — ownership
+     * cannot be verified (R8 §6).
+     */
+    public static int getSeqServidor(Map<String, String> userData) {
+        if (userData == null) return -1;
+        String raw = userData.get("consecutivoServidor");
+        String numero = userData.get("numero");
+        if (raw == null || numero == null) return -1;
+        raw = raw.trim();
+        if (raw.length() <= 6 || numero.trim().isEmpty()) return -1;
+
+        int seq = seqDe(raw);
+        if (seq < 0) return -1;
+
+        String prefijo = raw.substring(0, raw.length() - 6).replace("-", "").trim();
+        try {
+            if (Integer.parseInt(prefijo) != Integer.parseInt(numero.trim())) {
+                Log.w(TAG, "CONSECUTIVO del servidor ('" + raw + "') no corresponde al técnico "
+                        + numero.trim() + "; se ignora.");
+                return -1;
+            }
+        } catch (Exception e) {
+            return -1;
+        }
+        return seq;
+    }
+
+    /**
+     * The §4 floor: {@code max(local stored, local files, server)}. The single place the three
+     * inputs meet, and the only one that should ever decide what the next number is built on.
+     * <p>
+     * It only ever raises, so a stale server read — the value can be a day old, and badly stale
+     * after a wipe — can never pull the counter backwards and mint a duplicate. The result is
+     * written back through {@link #setStoredConsecutivo} immediately, so the next launch keeps it
+     * even with no network.
+     */
+    public static synchronized int getConsecutivoFloor(Context context, Map<String, String> userData) {
+        String numero = (userData == null) ? null : userData.get("numero");
+        if (numero == null || numero.trim().isEmpty()) return 0;
+
+        int local = getStoredConsecutivo(context, numero);
+        int archivos = reconcileConsecutivo(context, numero);
+        int servidor = getSeqServidor(userData);
+
+        int floor = Math.max(local, Math.max(archivos, servidor));
+        if (floor < 0) floor = 0;
+        // Raise an EXISTING counter; never create one. setStoredConsecutivo creates the
+        // consecutivos.<numero> key and isConsecutivoInicializado tests key presence, so
+        // persisting here on a device with no counter would silently satisfy the fresh-install
+        // gate — after which the phone mints from the office's seed + 1 and duplicates the
+        // técnico's whole history. Reading the floor must never be what establishes a counter.
+        if (floor > local && tieneContadorLocal(context, numero)) {
+            setStoredConsecutivo(context, numero, floor);
+        }
+        return floor;
+    }
+
+    /**
+     * Local evidence that this device already has a counter: the stored key, or surviving
+     * {@code Remision_*.json} files. Deliberately separate from
+     * {@link #isConsecutivoInicializado}, which Phase 2 will widen to accept a server value —
+     * {@link #getConsecutivoFloor} must keep asking this narrower question, or it would again
+     * become the thing that establishes the counter it is only supposed to raise.
+     */
+    private static synchronized boolean tieneContadorLocal(Context context, String tecnicoNumero) {
+        if (tecnicoNumero == null || tecnicoNumero.trim().isEmpty()) return false;
+        JSONObject cons = readAppConfig(context).optJSONObject("consecutivos");
+        if (cons != null && cons.has(tecnicoNumero)) return true;
         return reconcileConsecutivo(context, tecnicoNumero) > 0;
+    }
+
+    /**
+     * True once a counter has been established for this técnico. Uses key presence (not value),
+     * so a técnico who seeds "never sent" (sequence 0) still counts as configured.
+     * <p>
+     * <b>Local evidence only — and it stays that way.</b> R8 §6's table had a server value also
+     * counting as "initialized", to retire the manual re-seed flow. Phase 2 retired that flow a
+     * safer way: the gate in {@code IngresarRemisionActivity} now answers "no local counter" with
+     * a blocking claim that applies the §8 margin, so nobody is sent to the manual screen anyway.
+     * <p>
+     * Do <b>not</b> add {@code getSeqServidor(userData) >= 0} here. It would make this return true
+     * on a wiped phone, skipping that claim, and the phone would take the server's value + 1 —
+     * re-minting every number consumed offline before the wipe. Having no local history is exactly
+     * the state where those numbers are unknowable, which is why the margin exists.
+     */
+    public static synchronized boolean isConsecutivoInicializado(Context context, Map<String, String> userData) {
+        String tecnicoNumero = (userData == null) ? null : userData.get("numero");
+        if (tecnicoNumero == null || tecnicoNumero.trim().isEmpty()) return false;
+        // Key presence (not value) plus the self-heal from surviving remisión files.
+        return tieneContadorLocal(context, tecnicoNumero);
     }
 
     /**
@@ -1111,17 +1396,49 @@ public class Methods {
     }
 
     /**
+     * The sequences this técnico has actually committed above {@code desde}, read from the saved
+     * {@code Remision_*.json} files — i.e. real evidence of numbers issued, in ascending order.
+     * <p>
+     * This exists because the claim's optional {@code usados=} list must not be inferred from the
+     * counter: {@link #getConsecutivoFloor} can raise the stored value without a single remisión
+     * being sent (an office override typed into the server column, or another install's claim), so
+     * enumerating the integer gap would report numbers this phone never issued into the audit log
+     * that is supposed to prove what it did. Bounded by the 14-day sweep, which is fine — a short
+     * list is accurate, and the list is an enrichment, never the counter itself.
+     */
+    public static synchronized List<Integer> getConsecutivosUsados(Context context,
+                                                                   String tecnicoNumero, int desde) {
+        List<Integer> usados = new ArrayList<>();
+        if (tecnicoNumero == null || tecnicoNumero.trim().isEmpty()) return usados;
+        final String prefix = format2Digitos(tecnicoNumero);
+        File[] files = context.getFilesDir().listFiles((d, name) ->
+                name != null && name.startsWith("Remision_" + prefix) && name.endsWith(".json"));
+        if (files == null) return usados;
+        for (File f : files) {
+            String id = f.getName().replace("Remision_", "").replace(".json", "");
+            if (id.length() != prefix.length() + 6 || !id.startsWith(prefix)) continue;
+            int seq = seqDe(id);
+            if (seq > desde) usados.add(seq);
+        }
+        java.util.Collections.sort(usados);
+        return usados;
+    }
+
+    /**
      * Returns the next consecutivo for this técnico WITHOUT consuming it.
      * A missing técnico número is a fatal, unrecoverable configuration error.
      */
-    public static String peekProximoConsecutivo(Context context, String tecnicoNumero) {
+    public static String peekProximoConsecutivo(Context context, Map<String, String> userData) {
+        String tecnicoNumero = (userData == null) ? null : userData.get("numero");
         if (tecnicoNumero == null || tecnicoNumero.trim().isEmpty()) {
             showFatalError(context, "El técnico no tiene un número asignado en 'Datos App.xlsx'. "
                     + "Notifique a la oficina. La aplicación se cerrará.");
             return null;
         }
-        int base = Math.max(getStoredConsecutivo(context, tecnicoNumero), reconcileConsecutivo(context, tecnicoNumero));
-        return formatConsecutivo(tecnicoNumero, base + 1);
+        // Takes the shared §4 floor rather than a local-only max, so the server's value can raise
+        // it. Takes userData, not just the número, deliberately: there is no overload that can
+        // bypass the floor by accident.
+        return formatConsecutivo(tecnicoNumero, getConsecutivoFloor(context, userData) + 1);
     }
 
     /**
@@ -1129,9 +1446,13 @@ public class Methods {
      * Call only after a remisión has been successfully sent.
      */
     public static synchronized void commitConsecutivo(Context context, String tecnicoNumero, String consecutivo) {
-        if (tecnicoNumero == null || consecutivo == null || consecutivo.length() < 6) return;
+        if (tecnicoNumero == null || consecutivo == null) return;
         try {
-            int seq = Integer.parseInt(consecutivo.substring(consecutivo.length() - 6));
+            int seq = seqDe(consecutivo);
+            if (seq < 0) {
+                Log.e(TAG, "Error committing consecutivo: unparseable '" + consecutivo + "'");
+                return;
+            }
             if (seq > getStoredConsecutivo(context, tecnicoNumero)) {
                 setStoredConsecutivo(context, tecnicoNumero, seq);
             }
@@ -1563,6 +1884,11 @@ public class Methods {
     }
 
     public static synchronized File generarPDFRemision(Context context, String consecutivo, Map<String, String> fincaData, List<Map<String, String>> items, Map<String, String> tecnicoData, Bitmap firmaTecnico, Bitmap firmaCliente, String observaciones) {
+        // Everything a human reads carries the office's format ("3-000045"); `consecutivo` itself
+        // stays the internal id because it is the storage key (R8 §6.0). The PDF is named with the
+        // visible form on purpose: it becomes the attachment name the office receives, nothing
+        // ever looks this file up by name, and cleanOldRemisiones still sweeps it by prefix.
+        String consecutivoVisible = visibleDeConsecutivo(consecutivo);
         PdfDocument document = new PdfDocument();
         int itemsPerPage = 10;
         int totalItems = items.size();
@@ -1631,7 +1957,7 @@ public class Methods {
 
         y += 20;
         canvas.drawText("FECHA: " + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")), x, y, paint);
-        canvas.drawText("REMISIÓN: " + consecutivo, 400, y, titlePaint);
+        canvas.drawText("REMISIÓN: " + consecutivoVisible, 400, y, titlePaint);
         canvas.drawText("PÁGINA " + (p + 1) + " DE " + totalPages, 400, y + 20, paint);
 
         y += 30;
@@ -1802,7 +2128,7 @@ public class Methods {
             document.finishPage(page);
         }
 
-        File file = new File(context.getFilesDir(), "Remision_" + consecutivo + ".pdf");
+        File file = new File(context.getFilesDir(), "Remision_" + consecutivoVisible + ".pdf");
         try {
             document.writeTo(new FileOutputStream(file));
             Log.d(TAG, "PDF saved: " + file.getAbsolutePath());

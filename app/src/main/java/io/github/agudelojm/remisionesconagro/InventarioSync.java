@@ -6,6 +6,8 @@ import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 
+import org.json.JSONObject;
+
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -15,6 +17,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Calendar;
 import java.util.LinkedHashMap;
@@ -54,6 +57,14 @@ public class InventarioSync {
     private static final int READ_TIMEOUT_MS = 20000;
 
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
+
+    /**
+     * The claim gets its own thread, because {@link #executor} is single-threaded and already
+     * carries the two daily downloads. The blocking claim sits behind a dialog the técnico cannot
+     * dismiss, so queuing it behind a 4-request database sync (15 s connect + 20 s read each)
+     * could hold them there for minutes on a slow link. The silent push shares it harmlessly.
+     */
+    private static final ExecutorService claimExecutor = Executors.newSingleThreadExecutor();
 
     /**
      * True while a database sync is running. MainActivity.onCreate fires again on rotation and
@@ -473,6 +484,271 @@ public class InventarioSync {
     // ---------------------------------------------------------------------------------------
     // HTTP + helpers
     // ---------------------------------------------------------------------------------------
+
+    // ---------------------------------------------------------------------------------------
+    // Consecutivo claim (R8 Phase 2) — the only write this app makes to the server
+    // ---------------------------------------------------------------------------------------
+
+    private enum ClaimStatus { OK, FAILED }
+
+    private static class ClaimResult {
+        final ClaimStatus status;
+        /** The value the server holds after the claim; -1 when it did not answer usably. */
+        final int seq;
+        ClaimResult(ClaimStatus status, int seq) {
+            this.status = status;
+            this.seq = seq;
+        }
+    }
+
+    /** Result of a claim the caller had to wait for. {@code seq} is -1 when it could not be made. */
+    public interface ClaimListener {
+        void onResult(int seq);
+    }
+
+    /**
+     * Tells the server the highest consecutivo this técnico has consumed, when it does not know
+     * it yet. Fire-and-forget by design (R8 §11):
+     *
+     * <ul>
+     *   <li><b>Silent, always.</b> No dialog on any failure. The remisión already left by email,
+     *       the técnico cannot act on a push error, and the state self-heals on the next open.</li>
+     *   <li><b>No daily guard.</b> Unlike the two downloads, an unconfirmed counter must retry at
+     *       every app open — the cost is one ~200-byte request.</li>
+     *   <li><b>Nothing waits on it.</b> It never blocks a remisión.</li>
+     * </ul>
+     *
+     * A blank {@code SET_CONSECUTIVO_URL} turns the whole thing off and numbering stays purely
+     * local, which is exactly the pre-R8 behaviour.
+     */
+    public static void pushConsecutivoIfPending(final Context context, final String numero,
+                                                final String cedula) {
+        if (context == null || numero == null || cedula == null) return;
+        if (numero.trim().isEmpty() || cedula.trim().isEmpty()) return;
+        if (BuildConfig.SET_CONSECUTIVO_URL == null
+                || BuildConfig.SET_CONSECUTIVO_URL.trim().isEmpty()) return;
+
+        final Context appContext = context.getApplicationContext();
+        if (!Methods.hayConsecutivoPendiente(appContext, numero)) return;
+
+        executor.execute(() -> {
+            try {
+                int stored = Methods.getStoredConsecutivo(appContext, numero);
+                int confirmado = Methods.getSeqConfirmado(appContext, numero);
+                if (stored <= confirmado) return; // another push got there first
+                ClaimResult result = claim(appContext, numero, cedula, stored,
+                        usados(appContext, numero, confirmado));
+                if (result.status == ClaimStatus.OK) {
+                    adoptClaim(appContext, numero, result.seq);
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "Consecutivo push failed", t);
+            }
+        });
+    }
+
+    /**
+     * The one claim that has to be waited for: a device with no local counter needs a number
+     * before it can write its first remisión (R8 §7 case 2).
+     *
+     * <p>It asks for the §8 margin, not {@code floor + 1}: a wiped phone cannot know what it
+     * consumed offline before dying, so it deliberately burns up to 99 numbers to turn a possible
+     * duplicate into a gap the office can recognise. This is the one path allowed to establish a
+     * local counter, because the number it stores came from the server.
+     *
+     * @param listener called on the UI thread, once, with the server's value or -1.
+     */
+    public static void claimConsecutivoConMargen(final Activity activity,
+                                                 final Map<String, String> userData,
+                                                 final ClaimListener listener) {
+        if (listener == null) return;
+        final String numero = (userData == null) ? null : userData.get("numero");
+        final String cedula = (userData == null) ? null : userData.get("cedula");
+        if (activity == null || numero == null || cedula == null
+                || numero.trim().isEmpty() || cedula.trim().isEmpty()
+                || BuildConfig.SET_CONSECUTIVO_URL == null
+                || BuildConfig.SET_CONSECUTIVO_URL.trim().isEmpty()) {
+            listener.onResult(-1);
+            return;
+        }
+
+        final Context appContext = activity.getApplicationContext();
+        claimExecutor.execute(() -> {
+            int seq = -1;
+            try {
+                // A claim may already have landed while this one was queued: the gate fires again
+                // whenever the activity is recreated (low memory, "don't keep activities"). Without
+                // this re-check the second claim would see the adopted floor and ask for the NEXT
+                // margin block — burning 200 numbers of the office's series for one recreation.
+                if (Methods.isConsecutivoInicializado(appContext, userData)) {
+                    seq = Methods.getStoredConsecutivo(appContext, numero);
+                } else {
+                    int margen = Methods.seqConMargen(Methods.getConsecutivoFloor(appContext, userData));
+                    if (margen < 0) {
+                        // The 6-digit series is exhausted; there is no next number to hand out.
+                        Log.e(TAG, "Serie de consecutivos agotada para el técnico " + numero);
+                    } else {
+                        ClaimResult result = claim(appContext, numero, cedula, margen, null);
+                        if (result.status == ClaimStatus.OK) {
+                            adoptClaim(appContext, numero, result.seq);
+                            // Report success only once a local counter demonstrably EXISTS, not
+                            // merely because the server answered. adoptClaim raises the counter
+                            // only when the value is higher, and setStoredConsecutivo swallows
+                            // write failures — so a 0 answer or a failed app_config.json write
+                            // would otherwise let the gate open with no counter at all, and the
+                            // first remisión would be minted as ...000001, duplicating the
+                            // técnico's whole history. That is what the margin exists to prevent.
+                            if (Methods.isConsecutivoInicializado(appContext, userData)) {
+                                seq = result.seq;
+                            } else {
+                                Log.e(TAG, "El servidor respondió " + result.seq
+                                        + " pero el contador local no quedó establecido");
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "Blocking consecutivo claim failed", t);
+            }
+            final int entregado = seq;
+            if (!activity.isFinishing() && !activity.isDestroyed()) {
+                activity.runOnUiThread(() -> listener.onResult(entregado));
+            }
+        });
+    }
+
+    /** True when the claim endpoint is configured at all. A blank URL means the feature is off. */
+    public static boolean claimConfigurado() {
+        return BuildConfig.SET_CONSECUTIVO_URL != null
+                && !BuildConfig.SET_CONSECUTIVO_URL.trim().isEmpty();
+    }
+
+    private static ClaimResult claim(Context appContext, String numero, String cedula,
+                                     int seq, String usados) {
+        // Every value is percent-encoded. The key especially: a rotated secret containing '+'
+        // would be decoded by PHP's $_GET as a space and 401 forever — and the symptom ("the
+        // counter is never confirmed") looks exactly like the endpoint not being deployed.
+        StringBuilder url = new StringBuilder(BuildConfig.SET_CONSECUTIVO_URL.trim())
+                .append("?key=").append(enc(BuildConfig.DATOS_APP_KEY))
+                .append("&numero=").append(enc(numero.trim()))
+                .append("&cedula=").append(enc(cedula.trim()))
+                .append("&seq=").append(seq)
+                .append("&device=").append(enc(Methods.getInstallId(appContext)));
+        if (usados != null && !usados.isEmpty()) url.append("&usados=").append(enc(usados));
+        return httpClaim(url.toString());
+    }
+
+    private static String enc(String value) {
+        if (value == null) return "";
+        try {
+            return URLEncoder.encode(value, "UTF-8");
+        } catch (Exception e) {
+            return value;
+        }
+    }
+
+    /**
+     * Records what the server answered. Both writes only ever raise, so this is safe to run from
+     * the background thread: every {@code Methods} accessor for {@code app_config.json} is
+     * {@code synchronized}, so it cannot interleave with the UI thread's own writes.
+     */
+    private static void adoptClaim(Context appContext, String numero, int seq) {
+        Methods.setSeqConfirmado(appContext, numero, seq);
+        // A value from the server — another install's claim, or a margin it granted — must raise
+        // this phone's counter now, not wait for tomorrow's table download.
+        if (seq > Methods.getStoredConsecutivo(appContext, numero)) {
+            Methods.setStoredConsecutivo(appContext, numero, seq);
+        }
+        Log.d(TAG, "Consecutivo confirmado por el servidor: " + numero + " -> " + seq);
+    }
+
+    /**
+     * The individual numbers consumed since the last confirmed claim, so the office's audit log
+     * holds every remisión number and not just "45 -> 48" after an offline stretch (R8 §5).
+     *
+     * <p>Read from the saved remisión files, NOT inferred from the counter: the stored value can
+     * be raised by the floor with no remisión sent at all (an office override in the server
+     * column, another install's claim), and reporting that integer gap would fill the audit log
+     * with numbers this phone never issued.
+     *
+     * <p>Capped by LENGTH, not by count: the server's column is 255 characters, and 40 six-digit
+     * sequences plus their commas is 279 — a count-based cap silently loses its margin as the
+     * series grows and would let the server truncate mid-number. Keeps the newest, which are the
+     * ones the office is still reconciling.
+     */
+    private static final int USADOS_MAX_CHARS = 240;
+
+    private static String usados(Context appContext, String numero, int desde) {
+        List<Integer> nums = Methods.getConsecutivosUsados(appContext, numero, desde);
+        if (nums.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder();
+        for (int i = nums.size() - 1; i >= 0; i--) {       // newest first
+            String s = String.valueOf(nums.get(i));
+            if (sb.length() + s.length() + 1 > USADOS_MAX_CHARS) break;
+            if (sb.length() > 0) sb.insert(0, ',');
+            sb.insert(0, s);
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
+    /**
+     * The claim's own HTTP, deliberately not {@link #httpGet}: that one maps anything unexpected
+     * to NETWORK_ERROR and throws the body away, but a <b>409 here is an authoritative answer</b>
+     * — "refused, I already hold a higher number" — and its body carries the value to adopt. The
+     * app treats 200 and 409 identically; the only difference is whether this phone was stale.
+     */
+    private static ClaimResult httpClaim(String urlStr) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+
+            int code = conn.getResponseCode();
+            if (code == HttpURLConnection.HTTP_OK || code == HttpURLConnection.HTTP_CONFLICT) {
+                // 409 bodies arrive on the error stream, not the input stream — and that stream can
+                // be null (a 409 with no body, e.g. through a proxy). readAll(null) would NPE,
+                // which catch (IOException) below does not catch, so the diagnostic log for a
+                // malformed answer would be lost and the NPE would surface at the caller instead.
+                InputStream in = (code == HttpURLConnection.HTTP_OK)
+                        ? conn.getInputStream() : conn.getErrorStream();
+                int seq = (in == null) ? -1 : parseClaimSeq(readAll(in));
+                if (seq < 0) {
+                    Log.w(TAG, "Claim answered " + code + " with an unusable body");
+                    return new ClaimResult(ClaimStatus.FAILED, -1);
+                }
+                return new ClaimResult(ClaimStatus.OK, seq);
+            }
+
+            // 403 (numero/cedula mismatch), 401 (bad key), 400 (bad params) are all config faults
+            // the técnico cannot fix. Logged, never shown, retried on the next open — which costs
+            // one tiny request and is how a corrected server row heals itself.
+            Log.w(TAG, "Claim rejected with HTTP " + code + " by " + safeHost(urlStr));
+            return new ClaimResult(ClaimStatus.FAILED, -1);
+
+        } catch (IOException e) {
+            Log.w(TAG, "Network error claiming consecutivo: " + e.getMessage());
+            return new ClaimResult(ClaimStatus.FAILED, -1);
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** Reads {@code seq} out of the claim response, tolerating a body that only has the string. */
+    private static int parseClaimSeq(byte[] body) {
+        if (body == null || body.length == 0) return -1;
+        try {
+            JSONObject json = new JSONObject(new String(body, StandardCharsets.UTF_8));
+            int seq = json.optInt("seq", -1);
+            if (seq >= 0) return seq;
+            return Methods.seqDe(json.optString("consecutivo", ""));
+        } catch (Exception e) {
+            Log.w(TAG, "Could not parse the claim response: " + e.getMessage());
+            return -1;
+        }
+    }
 
     private static FetchResult httpGet(String urlStr) {
         HttpURLConnection conn = null;

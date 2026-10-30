@@ -116,22 +116,58 @@ public class IngresarRemisionActivity extends AppCompatActivity {
             tecnicoNumero = userData.getOrDefault("numero", "");
         }
 
-        // Fresh-install gate: block remisiones until the consecutivo counter is configured.
-        if (!Methods.isConsecutivoInicializado(this, tecnicoNumero)) {
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle("Consecutivo no configurado")
-                    .setMessage("Debe configurar el número de consecutivo antes de crear remisiones.")
-                    .setCancelable(false)
-                    .setPositiveButton("Configurar", (d, w) -> {
-                        Intent intent = new Intent(this, CambiarConsecutivoActivity.class);
-                        intent.putExtra("userData", userData);
-                        startActivity(intent);
-                        finish();
-                    })
-                    .show();
+        // Fresh-install gate (R8 §7). A device that already has a local counter proceeds
+        // untouched. One with none does NOT simply take the server's value + 1: having no local
+        // history is precisely the state in which the numbers consumed offline before a wipe are
+        // unknowable, so it claims with the §8 margin and adopts whatever the server grants. That
+        // is a deliberate tightening of §7 case 1 — a gap on reinstall is recoverable, a
+        // duplicate is not. The manual re-seed screen is no longer offered as the escape.
+        if (!Methods.isConsecutivoInicializado(this, userData)) {
+            if (!InventarioSync.claimConfigurado()) {
+                // The feature is off in this build (no SET_CONSECUTIVO_URL — which is what a fresh
+                // clone or a CI build produces). Going through the claim would show the técnico
+                // "no se pudo obtener del servidor… conéctese a internet", blaming a server that
+                // was never configured. Straight to the pre-R8 dialog instead.
+                pedirConsecutivoManual("Debe configurar el número de consecutivo antes de crear remisiones.");
+                return;
+            }
+            esperandoConsecutivo = Methods.showLoading(this, "Obteniendo su consecutivo...");
+            esperandoConsecutivo.show();
+            InventarioSync.claimConsecutivoConMargen(this, userData, seq -> {
+                cerrarEsperaConsecutivo();
+                if (seq >= 0) {
+                    arrancarPantalla();
+                } else {
+                    // The manual seed screen is the fallback, NOT a dead end. Its menu button is
+                    // gone (R8 §7), but the class is deliberately kept and this is the one place
+                    // that still reaches it — because the claim can fail for reasons the técnico
+                    // cannot wait out: a build with no SET_CONSECUTIVO_URL, a rotated key (401),
+                    // or a numero/cédula drift against the server (403). Offering only "Salir"
+                    // would leave a fresh install unable to ever write a remisión.
+                    new android.app.AlertDialog.Builder(this)
+                            .setTitle("Consecutivo no configurado")
+                            .setMessage("No se pudo obtener su consecutivo del servidor. "
+                                    + "Conéctese a internet y vuelva a intentarlo, o configúrelo "
+                                    + "manualmente con el número de su última remisión enviada.")
+                            .setCancelable(false)
+                            .setPositiveButton("Configurar manualmente", (d, w) -> {
+                                Intent intent = new Intent(this, CambiarConsecutivoActivity.class);
+                                intent.putExtra("userData", userData);
+                                startActivity(intent);
+                                finish();
+                            })
+                            .setNegativeButton("Salir", (d, w) -> finish())
+                            .show();
+                }
+            });
             return;
         }
 
+        arrancarPantalla();
+    }
+
+    /** Everything after the consecutivo gate, so the gate can run asynchronously. */
+    private void arrancarPantalla() {
         initViews();
         setupListeners();
         loadMantenimientos();
@@ -141,9 +177,9 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         // be assigned without consuming it — hence it stays marked "Borrador": if the técnico
         // copies it onto paper and then abandons the remisión, the next one takes that number.
         // No need to re-check isConsecutivoInicializado: the gate above returns when it is not.
-        String proximo = Methods.peekProximoConsecutivo(this, tecnicoNumero);
+        String proximo = Methods.peekProximoConsecutivo(this, userData);
         tvwTitulo.setText(getString(R.string.ingresar_remisi_n)
-                + (proximo != null ? " (Borrador " + proximo + ")" : " (Borrador)"));
+                + (proximo != null ? " (Borrador " + Methods.visibleDeConsecutivo(proximo) + ")" : " (Borrador)"));
 
         // Feature 1: Load draft if exists
         loadDraft();
@@ -560,7 +596,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
     private void ejecutarGeneracionPDF() {
         // Peek the next consecutivo at commit time (not consumed until the send is confirmed).
         // A missing técnico número is fatal (peekProximoConsecutivo closes the app).
-        consecutivo = Methods.peekProximoConsecutivo(this, tecnicoNumero);
+        consecutivo = Methods.peekProximoConsecutivo(this, userData);
         if (consecutivo == null || consecutivo.isEmpty()) {
             // Fatal error already surfaced; clean up draft signatures on the way out.
             File dT = new File(getFilesDir(), "firma_tecnico_" + SIGNATURE_DRAFT_KEY + ".png");
@@ -616,7 +652,7 @@ public class IngresarRemisionActivity extends AppCompatActivity {
         Intent emailIntent = new Intent(Intent.ACTION_SEND);
         emailIntent.setType("application/pdf");
         emailIntent.putExtra(Intent.EXTRA_EMAIL, Methods.buildEmailRecipients(clientEmail, oficinaEmail));
-        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión " + consecutivo + " - " + 
+        emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Remisión " + Methods.visibleDeConsecutivo(consecutivo) + " - " + 
                 pdfFinca.getOrDefault("finca_nombre", ""));
         emailIntent.putExtra(Intent.EXTRA_TEXT, "Adjunto remisión generada.");
 
@@ -641,6 +677,12 @@ public class IngresarRemisionActivity extends AppCompatActivity {
 
                     // Consume the consecutivo only now that the send is confirmed
                     Methods.commitConsecutivo(this, tecnicoNumero, consecutivo);
+
+                    // Then tell the server, so the office has the number within seconds rather
+                    // than at the next login. Silent and non-blocking: the remisión has already
+                    // gone out, so a failure here must never be the técnico's problem.
+                    InventarioSync.pushConsecutivoIfPending(this, tecnicoNumero,
+                            userData != null ? userData.get("cedula") : null);
 
                     // FLUSH DRAFT and local state (draft kept on failure so it can be resent)
                     RemisionDraftCache.clear(tecnicoNumero);
